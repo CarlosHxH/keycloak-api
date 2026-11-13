@@ -50,15 +50,21 @@ keycloak-api/
 ├── routes.json                     # Mapeamento de rotas
 ├── netlify.toml                    # Configuração Netlify
 │
+├── painel.html                     # Painel de controle (/painel)
+│
 ├── config/
-│   └── roles.js                    # Definição de roles/papéis
+│   └── srop.json                   # Sistema SROP (módulos, funcionalidades e perfis)
+│
+├── data/                           # Gerado em runtime (identidade e sistemas do painel)
 │
 ├── keys/
 │   ├── private.pem                 # Chave privada RSA (gerada automaticamente)
 │   └── public.pem                  # Chave pública RSA (gerada automaticamente)
 │
 ├── utils/
-│   └── key-manager.js              # Gerenciador de chaves RSA
+│   ├── key-manager.js              # Gerenciador de chaves RSA
+│   ├── identity-store.js           # Identidade ativa (env, painel ou token importado)
+│   └── system-registry.js          # Sistemas carregados e cálculo das roles
 │
 └── netlify/
     └── functions/
@@ -110,20 +116,18 @@ PORT=9090
 
 ## ⚙️ Configuração
 
-### Definir Roles
+### Realm, client e sistema dinâmicos
 
-Edite `config/roles.js` para adicionar ou remover papéis:
+- **Realm**: qualquer realm da URL funciona (`/auth/realms/{qualquer}/...`); issuer, discovery e `realm-info`
+  são montados para ele. O code do login só vale no realm em que foi emitido.
+- **Client**: vem do `client_id` de cada requisição e vai no `azp` do token.
+- **Sistema**: cada JSON em `config/*.json` (exceto `*-example.json`) ou cadastrado pelo painel define um sistema;
+  o `client_id` do JSON liga o sistema ao client. As roles são `ROLE_<SISTEMA>_<MÓDULO>_<FUNCIONALIDADE>`
+  das funcionalidades ativas do perfil (`grupos`). Client sem sistema próprio usa `MOCK_SISTEMA_CONFIG`
+  ou, sem ela, a união de todos os sistemas.
 
-```javascript
-const ROLES = [
-    'ROLE_PERFIL_LISTAR',
-    'ROLE_USUARIO_CADASTRAR',
-    'ROLE_USUARIO_LISTAR',
-    'SUA_NOVA_ROLE'
-];
-
-module.exports = ROLES;
-```
+Com a identidade em modo **perfil**, as roles são calculadas a cada token conforme o client. Em modo
+**personalizado** ou com **token importado**, a mesma lista de roles vai para qualquer client.
 
 ### Customizar Dados de Usuário
 

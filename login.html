@@ -42,6 +42,11 @@
 			button:hover {
 				background: #006699;
 			}
+			.contexto {
+				color: #5d6773;
+				font-size: 13px;
+				margin-top: -6px;
+			}
 			.erro {
 				color: #b42318;
 				font-size: 14px;
@@ -54,6 +59,7 @@
 		<form class="login-box" id="loginForm">
 			<h2>MOCK KEYCLOAK</h2>
 			<p>Entre com o usuário e a senha do mock</p>
+			<p class="contexto" id="contexto"></p>
 			<input type="text" id="username" placeholder="Usuário" autocomplete="username" required autofocus />
 			<input type="password" id="password" placeholder="Senha" autocomplete="current-password" required />
 			<button type="submit" id="btnEntrar">Entrar</button>
@@ -63,6 +69,10 @@
 
 		<script>
 			const urlParams = new URLSearchParams(window.location.search);
+			const realm = (window.location.pathname.match(/\/realms\/([^/]+)\//) || [])[1] || '';
+
+			document.getElementById('contexto').textContent =
+				`Realm ${decodeURIComponent(realm)} · Client ${urlParams.get('client_id') || '—'}`;
 
 			document.getElementById('loginForm').addEventListener('submit', async event => {
 				event.preventDefault();
@@ -95,7 +105,8 @@
 							password: document.getElementById('password').value,
 							// O nonce volta dentro do code e o /token o devolve no JWT;
 							// o keycloak-js descarta o token quando o nonce não confere.
-							nonce: urlParams.get('nonce') || ''
+							nonce: urlParams.get('nonce') || '',
+							client_id: urlParams.get('client_id') || ''
 						})
 					});
 					const data = await response.json().catch(() => ({}));

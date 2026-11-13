@@ -128,6 +128,25 @@
 			ul.endpoints span { color: var(--muted); display: inline-block; min-width: 80px; }
 			details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
 			.hidden { display: none; }
+			textarea[readonly] { opacity: 0.8; }
+			.table-wrap { overflow-x: auto; }
+			table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+			th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+			th { color: var(--muted); font-weight: 500; }
+			td small { color: var(--muted); display: block; }
+			.badge {
+				display: inline-block;
+				font-size: 0.72rem;
+				border: 1px solid var(--border);
+				border-radius: 999px;
+				padding: 0 8px;
+				color: var(--muted);
+				margin-left: 4px;
+			}
+			.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+			.inline label { margin: 0; }
+			.inline select { width: auto; min-width: 180px; }
+			textarea.json { min-height: 140px; }
 		</style>
 	</head>
 	<body>
@@ -145,8 +164,8 @@
 				<h2>Importar access token</h2>
 				<p class="hint">
 					Cole um access token emitido pelo Keycloak real (ex.: copiado do navegador antes da manutenção).
-					O mock passa a emitir tokens com o mesmo usuário, <code>sub</code> e roles. A assinatura e a validade
-					do token colado não são verificadas: só os dados dele são usados.
+					O mock passa a emitir tokens com o mesmo usuário, <code>sub</code> e roles, para qualquer realm e client.
+					A assinatura e a validade do token colado não são verificadas: só os dados dele são usados.
 				</p>
 				<textarea id="tokenInput" class="token" placeholder="eyJhbGciOiJSUzI1NiIs..."></textarea>
 				<dl class="preview hidden" id="tokenPreview"></dl>
@@ -166,12 +185,17 @@
 					<div><label for="firstName">Nome</label><input id="firstName" /></div>
 					<div><label for="lastName">Sobrenome</label><input id="lastName" /></div>
 					<div>
-						<label for="perfil">Perfil do sistema</label>
+						<label for="perfil">Perfil</label>
 						<select id="perfil"></select>
 					</div>
 				</div>
+				<p class="hint" id="perfilHint" style="margin: 10px 0 0"></p>
 				<div style="margin-top: 12px">
-					<label for="roles">Roles do realm (uma por linha) · <span id="rolesCount">0</span></label>
+					<div class="inline" id="previewBox">
+						<label for="previewClient">Prévia das roles para o client</label>
+						<select id="previewClient"></select>
+					</div>
+					<label for="roles" style="margin-top: 8px">Roles do realm (uma por linha) · <span id="rolesCount">0</span></label>
 					<textarea id="roles" class="roles"></textarea>
 				</div>
 				<details id="extrasBox" class="hidden">
@@ -186,9 +210,43 @@
 			</section>
 
 			<section class="card">
+				<h2>Sistemas</h2>
+				<p class="hint">
+					Cada sistema gera as roles <code>ROLE_&lt;SISTEMA&gt;_&lt;MÓDULO&gt;_&lt;FUNCIONALIDADE&gt;</code> e é escolhido pelo
+					<code>client_id</code> que pede o token. Client sem sistema cadastrado recebe o sistema padrão
+					(<code>MOCK_SISTEMA_CONFIG</code>) ou, sem ele, a união de todos.
+				</p>
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr><th>Sistema</th><th>Client</th><th>Perfis</th><th>Origem</th><th></th></tr>
+						</thead>
+						<tbody id="sistemas"></tbody>
+					</table>
+				</div>
+				<details>
+					<summary>Cadastrar ou atualizar sistema (JSON no formato de config/srop.json)</summary>
+					<textarea id="sistemaJson" class="json" placeholder='{ "sistema": { "mnemonico": "...", "client_id": "...", "modulos": [ ... ] } }'></textarea>
+					<div class="actions">
+						<input type="file" id="sistemaArquivo" accept=".json,application/json" style="width: auto" />
+						<button class="primary" id="btnSistema">Cadastrar sistema</button>
+						<span class="status" id="statusSistema"></span>
+					</div>
+				</details>
+			</section>
+
+			<section class="card">
 				<h2>Token de teste</h2>
 				<p class="hint">Gera um access token da identidade ativa, para Swagger, Postman ou curl.</p>
-				<div class="actions" style="margin-top: 0">
+				<div class="grid">
+					<div><label for="realm">Realm</label><input id="realm" /></div>
+					<div>
+						<label for="clientId">Client</label>
+						<input id="clientId" list="clientsList" />
+						<datalist id="clientsList"></datalist>
+					</div>
+				</div>
+				<div class="actions">
 					<button id="btnGerar">Gerar access token</button>
 					<button id="btnCopiar" class="hidden">Copiar</button>
 					<span class="status" id="statusGerar"></span>
@@ -197,7 +255,8 @@
 			</section>
 
 			<section class="card">
-				<h2>Endpoints</h2>
+				<h2>Endpoints <span class="badge">realm <span id="endpointsRealm"></span></span></h2>
+				<p class="hint">Qualquer realm é aceito; troque o realm no cartão acima para ver as URLs dele.</p>
 				<ul class="endpoints" id="endpoints"></ul>
 			</section>
 		</main>
@@ -226,6 +285,13 @@
 				el.className = `status ${tipo || ''}`;
 			}
 
+			function el(tag, props = {}, ...children) {
+				const node = document.createElement(tag);
+				Object.assign(node, props);
+				node.append(...children);
+				return node;
+			}
+
 			function decodeJwtPayload(token) {
 				const parts = token.trim().replace(/^bearer\s+/i, '').split('.');
 				if (parts.length < 2) {
@@ -248,13 +314,7 @@
 			function renderPreview(rows) {
 				const dl = $('tokenPreview');
 				dl.replaceChildren();
-				rows.forEach(([termo, valor]) => {
-					const dt = document.createElement('dt');
-					const dd = document.createElement('dd');
-					dt.textContent = termo;
-					dd.textContent = valor;
-					dl.append(dt, dd);
-				});
+				rows.forEach(([termo, valor]) => dl.append(el('dt', { textContent: termo }), el('dd', { textContent: valor })));
 				dl.classList.toggle('hidden', rows.length === 0);
 			}
 
@@ -294,31 +354,54 @@
 				$('rolesCount').textContent = `${readRoles().length} roles`;
 			}
 
-			function rolesDoPerfil(nome) {
-				return estado.perfis.find(p => p.nome === nome)?.roles || [];
+			function clientsConhecidos() {
+				const clients = estado.sistemas.map(s => s.clientId).filter(Boolean);
+				return [...new Set([estado.clientPadrao, ...clients])];
 			}
 
-			function render(novoEstado) {
-				estado = novoEstado;
-				const { identidade } = estado;
+			// Mesma regra do servidor: sistema pelo client_id, senão o padrão, senão a união de todos.
+			function rolesDoPerfil(perfil, clientId) {
+				const sistema = estado.sistemas.find(s => s.clientId && s.clientId === clientId) ||
+					estado.sistemas.find(s => s.padrao);
+				const alvo = sistema ? [sistema] : estado.sistemas;
+				const roles = alvo.flatMap(s => perfil === estado.perfilTodos
+					? s.todasRoles
+					: (s.perfis.find(p => p.nome === perfil)?.roles || []));
+				return [...new Set(roles)];
+			}
 
+			function modoPerfil() {
+				return $('perfil').value !== PERFIL_PERSONALIZADO;
+			}
+
+			function refreshRolesView() {
+				const porPerfil = modoPerfil();
+				$('previewBox').classList.toggle('hidden', !porPerfil);
+				$('roles').readOnly = porPerfil;
+				$('perfilHint').textContent = porPerfil
+					? 'As roles são calculadas a cada token, conforme o sistema do client. Abaixo, uma prévia.'
+					: 'Lista fixa: as mesmas roles são enviadas para qualquer client.';
+				if (porPerfil) {
+					$('roles').value = rolesDoPerfil($('perfil').value, $('previewClient').value).join('\n');
+				}
+				updateRolesCount();
+			}
+
+			function renderMeta() {
 				const meta = $('meta');
 				meta.replaceChildren();
 				[
-					['Sistema', estado.sistema],
-					['Realm', estado.realm],
-					['Client', estado.clientId],
-					['Issuer', estado.issuer]
+					['URL base', estado.baseUrl],
+					['Realm padrão', estado.realmPadrao],
+					['Client padrão', estado.clientPadrao],
+					['Sistemas', String(estado.sistemas.length)]
 				].forEach(([rotulo, valor]) => {
-					const chip = document.createElement('span');
-					chip.className = 'chip';
-					chip.append(`${rotulo}: `);
-					const strong = document.createElement('strong');
-					strong.textContent = valor;
-					chip.append(strong);
-					meta.append(chip);
+					meta.append(el('span', { className: 'chip' }, `${rotulo}: `, el('strong', { textContent: valor })));
 				});
+			}
 
+			function renderIdentidade() {
+				const { identidade } = estado;
 				const origens = {
 					env: 'Valores do .env.',
 					manual: 'Editada manualmente no painel.',
@@ -338,34 +421,88 @@
 				});
 
 				const select = $('perfil');
-				select.replaceChildren();
-				const personalizado = new Option('Personalizado (roles abaixo)', PERFIL_PERSONALIZADO);
-				select.append(personalizado);
-				estado.perfis.forEach(perfil => {
-					select.append(new Option(`${perfil.nome} (${perfil.roles.length} roles)`, perfil.nome));
-				});
-				select.value = estado.perfis.some(p => p.nome === identidade.perfil)
-					? identidade.perfil
-					: PERFIL_PERSONALIZADO;
+				select.replaceChildren(
+					new Option('Todas as funcionalidades', estado.perfilTodos),
+					...estado.perfis.map(nome => new Option(nome, nome)),
+					new Option('Personalizado (lista fixa de roles)', PERFIL_PERSONALIZADO)
+				);
+				const porPerfil = identidade.origem !== 'token' && identidade.perfil;
+				select.value = porPerfil ? identidade.perfil : PERFIL_PERSONALIZADO;
 
-				$('roles').value = identidade.roles.join('\n');
-				updateRolesCount();
+				const preview = $('previewClient');
+				const anterior = preview.value;
+				preview.replaceChildren(...clientsConhecidos().map(c => new Option(c, c)));
+				preview.value = clientsConhecidos().includes(anterior) ? anterior : estado.clientPadrao;
+
+				if (!porPerfil) {
+					$('roles').value = identidade.roles.join('\n');
+				}
+				refreshRolesView();
 
 				const extras = {};
 				if (Object.keys(identidade.extraClaims).length) extras.claims = identidade.extraClaims;
 				if (Object.keys(identidade.resourceAccess).length) extras.resource_access = identidade.resourceAccess;
 				$('extrasBox').classList.toggle('hidden', Object.keys(extras).length === 0);
 				$('extras').textContent = JSON.stringify(extras, null, 2);
+			}
 
-				const lista = $('endpoints');
-				lista.replaceChildren();
-				Object.entries(estado.endpoints).forEach(([nome, url]) => {
-					const li = document.createElement('li');
-					const rotulo = document.createElement('span');
-					rotulo.textContent = nome;
-					li.append(rotulo, url);
-					lista.append(li);
+			function renderSistemas() {
+				const tbody = $('sistemas');
+				tbody.replaceChildren();
+
+				if (!estado.sistemas.length) {
+					tbody.append(el('tr', {}, el('td', { colSpan: 5, textContent: 'Nenhum sistema carregado.' })));
+				}
+
+				estado.sistemas.forEach(sistema => {
+					const nome = el('td', {}, sistema.nome, el('small', { textContent: `${sistema.mnemonico} · ${sistema.arquivo}` }));
+					if (sistema.padrao) nome.append(el('span', { className: 'badge', textContent: 'padrão' }));
+
+					const perfis = sistema.perfis.map(p => `${p.nome} (${p.roles.length})`).join(', ') || '—';
+					const acoes = el('td');
+					if (sistema.origem === 'painel') {
+						const remover = el('button', { className: 'danger', textContent: 'Remover' });
+						remover.addEventListener('click', () => removerSistema(sistema.mnemonico));
+						acoes.append(remover);
+					}
+
+					tbody.append(el('tr', {},
+						nome,
+						el('td', { textContent: sistema.clientId || '—' }),
+						el('td', {}, perfis, el('small', { textContent: `${sistema.todasRoles.length} roles no total` })),
+						el('td', { textContent: sistema.origem === 'painel' ? 'painel' : 'config/' }),
+						acoes
+					));
 				});
+
+				$('clientsList').replaceChildren(...clientsConhecidos().map(c => el('option', { value: c })));
+			}
+
+			function renderEndpoints() {
+				const realm = $('realm').value.trim() || estado.realmPadrao;
+				const realmUrl = `${estado.baseUrl}/auth/realms/${encodeURIComponent(realm)}`;
+				$('endpointsRealm').textContent = realm;
+				$('endpoints').replaceChildren(...Object.entries({
+					issuer: realmUrl,
+					discovery: `${realmUrl}/.well-known/openid-configuration`,
+					auth: `${realmUrl}/protocol/openid-connect/auth`,
+					token: `${realmUrl}/protocol/openid-connect/token`,
+					certs: `${realmUrl}/protocol/openid-connect/certs`,
+					account: `${realmUrl}/account`
+				}).map(([nome, url]) => el('li', {}, el('span', { textContent: nome }), url)));
+			}
+
+			function render(novoEstado) {
+				const primeiraVez = !estado;
+				estado = novoEstado;
+				if (primeiraVez) {
+					$('realm').value = estado.realmPadrao;
+					$('clientId').value = estado.clientPadrao;
+				}
+				renderMeta();
+				renderIdentidade();
+				renderSistemas();
+				renderEndpoints();
 			}
 
 			async function carregar() {
@@ -373,6 +510,18 @@
 					render(await api('GET', '/painel/api/estado'));
 				} catch (error) {
 					setStatus('statusIdentidade', error.message, 'error');
+				}
+			}
+
+			async function removerSistema(mnemonico) {
+				if (!confirm(`Remover o sistema ${mnemonico}?`)) {
+					return;
+				}
+				try {
+					render(await api('DELETE', `/painel/api/sistemas/${encodeURIComponent(mnemonico)}`));
+					setStatus('statusSistema', `Sistema ${mnemonico} removido.`, 'ok');
+				} catch (error) {
+					setStatus('statusSistema', error.message, 'error');
 				}
 			}
 
@@ -390,23 +539,16 @@
 				}
 			});
 
-			$('perfil').addEventListener('change', event => {
-				if (event.target.value !== PERFIL_PERSONALIZADO) {
-					$('roles').value = rolesDoPerfil(event.target.value).join('\n');
-					updateRolesCount();
-				}
-			});
-
-			$('roles').addEventListener('input', () => {
-				updateRolesCount();
-				$('perfil').value = PERFIL_PERSONALIZADO;
-			});
+			$('perfil').addEventListener('change', refreshRolesView);
+			$('previewClient').addEventListener('change', refreshRolesView);
+			$('roles').addEventListener('input', updateRolesCount);
 
 			$('btnSalvar').addEventListener('click', async () => {
 				if (!$('sub').value.trim()) {
 					setStatus('statusIdentidade', 'O campo sub é obrigatório.', 'error');
 					return;
 				}
+				const porPerfil = modoPerfil();
 				try {
 					render(await api('PUT', '/painel/api/identidade', {
 						sub: $('sub').value.trim(),
@@ -415,8 +557,8 @@
 						firstName: $('firstName').value.trim(),
 						lastName: $('lastName').value.trim(),
 						name: [$('firstName').value.trim(), $('lastName').value.trim()].filter(Boolean).join(' '),
-						perfil: $('perfil').value || null,
-						roles: readRoles()
+						perfil: porPerfil ? $('perfil').value : null,
+						roles: porPerfil ? [] : readRoles()
 					}));
 					setStatus('statusIdentidade', 'Identidade salva.', 'ok');
 				} catch (error) {
@@ -436,13 +578,47 @@
 				}
 			});
 
+			$('sistemaArquivo').addEventListener('change', async event => {
+				const arquivo = event.target.files[0];
+				if (arquivo) {
+					$('sistemaJson').value = await arquivo.text();
+				}
+			});
+
+			$('btnSistema').addEventListener('click', async () => {
+				let json;
+				try {
+					json = JSON.parse($('sistemaJson').value);
+				} catch (error) {
+					setStatus('statusSistema', `JSON inválido: ${error.message}`, 'error');
+					return;
+				}
+				try {
+					render(await api('POST', '/painel/api/sistemas', json));
+					$('sistemaJson').value = '';
+					$('sistemaArquivo').value = '';
+					setStatus('statusSistema', `Sistema ${json.sistema?.mnemonico} cadastrado.`, 'ok');
+				} catch (error) {
+					setStatus('statusSistema', error.message, 'error');
+				}
+			});
+
+			$('realm').addEventListener('input', renderEndpoints);
+
 			$('btnGerar').addEventListener('click', async () => {
 				try {
-					const tokens = await api('POST', '/painel/api/gerar-token');
+					const tokens = await api('POST', '/painel/api/gerar-token', {
+						realm: $('realm').value,
+						clientId: $('clientId').value
+					});
 					$('tokenGerado').textContent = tokens.access_token;
 					$('tokenGerado').classList.remove('hidden');
 					$('btnCopiar').classList.remove('hidden');
-					setStatus('statusGerar', `Válido por ${Math.round(tokens.expires_in / 60)} min.`, 'ok');
+					setStatus(
+						'statusGerar',
+						`Realm ${tokens.realm} · client ${tokens.clientId} · ${tokens.roles.length} roles · válido por ${Math.round(tokens.expires_in / 60)} min.`,
+						'ok'
+					);
 				} catch (error) {
 					setStatus('statusGerar', error.message, 'error');
 				}

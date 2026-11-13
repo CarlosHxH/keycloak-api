@@ -6,7 +6,7 @@ const dotenv = require('dotenv');
 
 const { loadOrGenerateKeys } = require('./utils/key-manager');
 const { createIdentityStore } = require('./utils/identity-store');
-const { ROLES, perfilPadrao, sistema, listPerfis } = require('./config/roles');
+const { createSystemRegistry, TODOS } = require('./utils/system-registry');
 
 dotenv.config();
 
@@ -14,6 +14,8 @@ const KID = 'mock-kid';
 const REFRESH_TOKEN_EXPIRES_IN = '30d';
 const CODE_EXPIRES_IN = '5m';
 const DEFAULT_ADMIN = 'admin';
+const DEFAULT_REALM = 'master';
+const DEFAULT_CLIENT = 'account';
 
 function createApp(root) {
     const server = jsonServer.create();
@@ -21,23 +23,25 @@ function createApp(root) {
     const config = loadConfig();
     const db = loadDatabase(root);
 
-    configureRealm(db, config);
-
     const router = jsonServer.router(db);
     const rewriter = createRewriter(root);
     const middlewares = createMiddlewares();
 
     const keys = createJwtKeys(root);
+    const systems = createSystemRegistry(root, { sistemaPadrao: config.sistemaPadrao });
     const identityStore = createIdentityStore(root, buildDefaultIdentity(config));
+
+    const ctx = { config, keys, systems, identityStore };
 
     registerHomeRedirect(server);
     registerMiddlewares(server, middlewares);
+    registerDiscoveryRoutes(server, ctx);
     registerJwksRoute(server, keys.jwk);
-    registerLoginRoute(server, keys.privateKey, config);
-    registerTokenRoute(server, keys, config, identityStore);
-    registerAccountRoute(server, identityStore);
-    registerUserinfoRoute(server, identityStore);
-    registerPanelRoutes(server, root, keys.privateKey, config, identityStore);
+    registerLoginRoute(server, ctx);
+    registerTokenRoute(server, ctx);
+    registerAccountRoute(server, ctx);
+    registerUserinfoRoute(server, ctx);
+    registerPanelRoutes(server, root, ctx);
     registerAuthRoute(server, root);
     registerLogoutRoute(server);
     registerRegistrationRoute(server);
@@ -50,6 +54,9 @@ function createApp(root) {
 
 /**
  * Carrega as configurações da aplicação.
+ *
+ * Realm e client vêm de cada requisição; MOCK_KEYCLOAK_REALM e MOCK_CLIENT_ID
+ * são só os valores sugeridos no painel.
  */
 function loadConfig() {
     const {
@@ -61,16 +68,12 @@ function loadConfig() {
         MOCK_USER_FIRST_NAME,
         MOCK_USER_LAST_NAME,
         MOCK_CLIENT_ID,
+        MOCK_SISTEMA_CONFIG,
+        MOCK_PERFIL,
         MOCK_ACCESS_TOKEN_EXPIRES_IN,
         MOCK_ADMIN_USUARIO,
         MOCK_ADMIN_SENHA
     } = process.env;
-
-    if (!MOCK_KEYCLOAK_REALM) {
-        throw new Error(
-            'A variável MOCK_KEYCLOAK_REALM não foi definida no arquivo .env'
-        );
-    }
 
     if (!MOCK_KEYCLOAK_URL) {
         throw new Error(
@@ -79,9 +82,11 @@ function loadConfig() {
     }
 
     return {
-        realm: MOCK_KEYCLOAK_REALM,
         baseUrl: MOCK_KEYCLOAK_URL.trim().replace(/\/+$/, ''),
-        clientId: MOCK_CLIENT_ID || 'srop-app',
+        realmPadrao: MOCK_KEYCLOAK_REALM?.trim() || DEFAULT_REALM,
+        clientPadrao: MOCK_CLIENT_ID?.trim() || DEFAULT_CLIENT,
+        sistemaPadrao: MOCK_SISTEMA_CONFIG?.trim() || null,
+        perfilPadrao: MOCK_PERFIL?.trim() || TODOS,
         user: {
             sub: MOCK_USER_SUB,
             username: MOCK_USER_USERNAME,
@@ -126,16 +131,32 @@ function isValidLogin(admin, usuario, senha) {
 
 /**
  * Identidade inicial do mock, montada a partir do .env.
+ *
+ * Com perfil definido, as roles são calculadas por client (sistema) a cada token.
  */
 function buildDefaultIdentity(config) {
     return {
         ...config.user,
-        roles: ROLES,
+        roles: [],
         resourceAccess: {},
         extraClaims: {},
-        perfil: perfilPadrao || null,
+        perfil: config.perfilPadrao,
         origem: 'env'
     };
+}
+
+/**
+ * Identidade com as roles efetivas para o client: as roles do perfil no
+ * sistema do client, ou a lista fixa (token importado / roles personalizadas).
+ */
+function resolveIdentity(ctx, clientId) {
+    const identity = ctx.identityStore.get();
+
+    if (identity.origem !== 'token' && identity.perfil) {
+        identity.roles = ctx.systems.rolesFor(clientId, identity.perfil);
+    }
+
+    return identity;
 }
 
 /**
@@ -182,9 +203,14 @@ function createJwtKeys(root) {
         format: 'jwk'
     });
 
+    const publicKeyBase64 = publicKeyObject
+        .export({ type: 'spki', format: 'der' })
+        .toString('base64');
+
     return {
         privateKey,
         publicKey,
+        publicKeyBase64,
         jwk
     };
 }
@@ -197,6 +223,48 @@ function registerMiddlewares(server, middlewares) {
 }
 
 /**
+ * Discovery do OIDC e informações do realm, montados para o realm da URL.
+ */
+function registerDiscoveryRoutes(server, { config, keys }) {
+    server.get(
+        '/auth/realms/:realm/.well-known/openid-configuration',
+        (req, res) => {
+            const realmUrl = buildRealmUrl(config.baseUrl, req.params.realm);
+
+            return res.json({
+                issuer: realmUrl,
+                authorization_endpoint: `${realmUrl}/protocol/openid-connect/auth`,
+                token_endpoint: `${realmUrl}/protocol/openid-connect/token`,
+                userinfo_endpoint: `${realmUrl}/protocol/openid-connect/userinfo`,
+                end_session_endpoint: `${realmUrl}/protocol/openid-connect/logout`,
+                jwks_uri: `${realmUrl}/protocol/openid-connect/certs`,
+                grant_types_supported: ['authorization_code', 'refresh_token', 'password'],
+                response_types_supported: ['code'],
+                response_modes_supported: ['query', 'fragment'],
+                id_token_signing_alg_values_supported: ['RS256'],
+                subject_types_supported: ['public'],
+                scopes_supported: ['openid', 'profile', 'email']
+            });
+        }
+    );
+
+    server.get(
+        '/auth/realms/:realm',
+        (req, res) => {
+            const realmUrl = buildRealmUrl(config.baseUrl, req.params.realm);
+
+            return res.json({
+                realm: req.params.realm,
+                public_key: keys.publicKeyBase64,
+                'token-service': `${realmUrl}/protocol/openid-connect`,
+                'account-service': `${realmUrl}/account`,
+                'tokens-not-before': 0
+            });
+        }
+    );
+}
+
+/**
  * Endpoint JWKS.
  *
  * Retorna a chave pública utilizada pelos clientes
@@ -206,10 +274,6 @@ function registerJwksRoute(server, jwk) {
     server.get(
         '/auth/realms/:realm/protocol/openid-connect/certs',
         (req, res) => {
-            console.log(
-                '>>> GET /auth/realms/:realm/protocol/openid-connect/certs'
-            );
-
             return res.json({
                 keys: [
                     {
@@ -227,19 +291,15 @@ function registerJwksRoute(server, jwk) {
 /**
  * Valida usuário/senha da tela de login e devolve o authorization code.
  *
- * O code é um JWT assinado pelo mock com o nonce do keycloak-js, então não
- * pode ser forjado no navegador para pular a senha.
+ * O code é um JWT assinado pelo mock com o nonce do keycloak-js, o realm e o
+ * client, então não pode ser forjado no navegador para pular a senha.
  */
-function registerLoginRoute(server, privateKey, config) {
+function registerLoginRoute(server, { config, keys }) {
     server.post(
         '/auth/realms/:realm/login-actions/authenticate',
         jsonServer.bodyParser,
         (req, res) => {
-            const { username, password, nonce } = req.body || {};
-
-            if (req.params.realm !== config.realm) {
-                return res.status(404).json({ error: 'Realm not found' });
-            }
+            const { username, password, nonce, client_id: clientId } = req.body || {};
 
             if (!isValidLogin(config.admin, username, password)) {
                 console.log(`❌ Login recusado para "${username || ''}"`);
@@ -248,8 +308,13 @@ function registerLoginRoute(server, privateKey, config) {
             }
 
             const code = jwt.sign(
-                { typ: 'Code', nonce: nonce || undefined },
-                privateKey,
+                {
+                    typ: 'Code',
+                    nonce: nonce || undefined,
+                    realm: req.params.realm,
+                    azp: clientId || undefined
+                },
+                keys.privateKey,
                 { algorithm: 'RS256', keyid: KID, expiresIn: CODE_EXPIRES_IN }
             );
 
@@ -262,35 +327,31 @@ function registerLoginRoute(server, privateKey, config) {
  * Endpoint de emissão de tokens.
  *
  * Aceita authorization_code (code emitido no login, com o nonce), refresh_token
- * e password. O keycloak-js descarta o token se o nonce não for o mesmo
- * enviado na tela de login.
+ * e password, para qualquer realm. O keycloak-js descarta o token se o nonce
+ * não for o mesmo enviado na tela de login.
  */
-function registerTokenRoute(server, keys, config, identityStore) {
+function registerTokenRoute(server, ctx) {
+    const { config, keys } = ctx;
+
     server.post(
         '/auth/realms/:realm/protocol/openid-connect/token',
         jsonServer.bodyParser,
         (req, res) => {
-            const requestedRealm = req.params.realm;
+            const { realm } = req.params;
             const body = req.body || {};
+            const grantType = body.grant_type || 'authorization_code';
 
             console.log(
-                `>>> POST /auth/realms/${requestedRealm}/protocol/openid-connect/token (${body.grant_type || 'sem grant_type'})`
+                `>>> POST /auth/realms/${realm}/protocol/openid-connect/token (${grantType}, client ${body.client_id || '—'})`
             );
 
-            if (requestedRealm !== config.realm) {
-                console.log(
-                    `❌ Realm não encontrado: ${requestedRealm}`
-                );
-
-                return res.status(404).json({
-                    error: 'Realm not found'
-                });
-            }
-
-            const grantType = body.grant_type || 'authorization_code';
             const readers = {
-                authorization_code: () => readSessionFromCode(body.code, keys.publicKey),
-                refresh_token: () => readSessionFromRefreshToken(body.refresh_token, keys.publicKey),
+                authorization_code: () => readSessionFromCode(body.code, keys.publicKey, realm),
+                refresh_token: () => readSessionFromRefreshToken(
+                    body.refresh_token,
+                    keys.publicKey,
+                    buildRealmUrl(config.baseUrl, realm)
+                ),
                 password: () => isValidLogin(config.admin, body.username, body.password)
                     ? { sid: crypto.randomUUID() }
                     : null
@@ -310,28 +371,28 @@ function registerTokenRoute(server, keys, config, identityStore) {
                 });
             }
 
-            session.clientId = body.client_id || session.clientId || config.clientId;
+            session.realm = realm;
+            session.clientId = body.client_id || session.clientId || config.clientPadrao;
 
             return res.status(200).json(
-                issueTokens(keys.privateKey, config, identityStore.get(), session)
+                issueTokens(ctx, session)
             );
         }
     );
 }
 
 /**
- * Emite o conjunto access/refresh/id token para a identidade informada.
+ * Emite o conjunto access/refresh/id token da identidade ativa para a sessão.
  */
-function issueTokens(privateKey, config, identity, session) {
-    const issuer = buildRealmUrl(
-        config.baseUrl,
-        config.realm
-    );
+function issueTokens(ctx, session) {
+    const { config, keys } = ctx;
+    const identity = resolveIdentity(ctx, session.clientId);
+    const issuer = buildRealmUrl(config.baseUrl, session.realm);
 
     return {
-        access_token: generateAccessToken(privateKey, issuer, config, identity, session),
-        refresh_token: generateRefreshToken(privateKey, issuer, identity, session),
-        id_token: generateIdToken(privateKey, issuer, config, identity, session),
+        access_token: generateAccessToken(keys.privateKey, issuer, config, identity, session),
+        refresh_token: generateRefreshToken(keys.privateKey, issuer, identity, session),
+        id_token: generateIdToken(keys.privateKey, issuer, config, identity, session),
         token_type: 'Bearer',
         expires_in: 3600,
         refresh_expires_in: 2592000,
@@ -343,9 +404,9 @@ function issueTokens(privateKey, config, identity, session) {
 /**
  * Verifica um JWT emitido pelo próprio mock e confere o typ esperado.
  */
-function verifyOwnToken(token, publicKey, typ) {
+function verifyOwnToken(token, publicKey, typ, options = {}) {
     try {
-        const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+        const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'], ...options });
 
         return decoded.typ === typ ? decoded : null;
     } catch (error) {
@@ -354,26 +415,28 @@ function verifyOwnToken(token, publicKey, typ) {
 }
 
 /**
- * Lê o nonce do code emitido em /login-actions/authenticate.
+ * Lê o nonce/client do code emitido em /login-actions/authenticate.
+ * O code só vale no realm em que o login foi feito.
  */
-function readSessionFromCode(code, publicKey) {
+function readSessionFromCode(code, publicKey, realm) {
     const decoded = code && verifyOwnToken(code, publicKey, 'Code');
 
-    if (!decoded) {
+    if (!decoded || decoded.realm !== realm) {
         return null;
     }
 
     return {
         nonce: decoded.nonce,
+        clientId: decoded.azp,
         sid: crypto.randomUUID()
     };
 }
 
 /**
- * Recupera nonce/sessão de um refresh token emitido anteriormente.
+ * Recupera nonce/sessão de um refresh token emitido para o mesmo realm.
  */
-function readSessionFromRefreshToken(refreshToken, publicKey) {
-    const decoded = refreshToken && verifyOwnToken(refreshToken, publicKey, 'Refresh');
+function readSessionFromRefreshToken(refreshToken, publicKey, issuer) {
+    const decoded = refreshToken && verifyOwnToken(refreshToken, publicKey, 'Refresh', { issuer });
 
     if (!decoded) {
         return null;
@@ -395,7 +458,7 @@ function buildUserClaims(identity) {
     const nomeCompleto = identity.name ||
         [identity.firstName, identity.lastName].filter(Boolean).join(' ');
 
-    const claims = {
+    return {
         ...identity.extraClaims,
         sub: identity.sub,
         preferred_username: identity.username,
@@ -405,8 +468,6 @@ function buildUserClaims(identity) {
         given_name: identity.firstName,
         family_name: identity.lastName
     };
-
-    return claims;
 }
 
 function buildAccessClaims(identity) {
@@ -503,11 +564,24 @@ function generateIdToken(privateKey, issuer, config, identity, session) {
 }
 
 /**
+ * Client do access token enviado no header Authorization (claim azp).
+ */
+function clientFromBearer(req, publicKey) {
+    const [scheme, token] = (req.headers.authorization || '').split(' ');
+
+    if (!/^bearer$/i.test(scheme || '') || !token) {
+        return null;
+    }
+
+    return verifyOwnToken(token, publicKey, 'Bearer')?.azp || null;
+}
+
+/**
  * Endpoint da conta do usuário.
  *
  * Consumido pelo keycloak-js em loadUserProfile().
  */
-function registerAccountRoute(server, identityStore) {
+function registerAccountRoute(server, { identityStore }) {
     server.get(
         '/auth/realms/:realm/account',
         (req, res) => {
@@ -527,13 +601,14 @@ function registerAccountRoute(server, identityStore) {
 }
 
 /**
- * Endpoint userinfo do OIDC, refletindo a identidade ativa.
+ * Endpoint userinfo do OIDC, com as roles do client do token recebido.
  */
-function registerUserinfoRoute(server, identityStore) {
+function registerUserinfoRoute(server, ctx) {
     server.get(
         '/auth/realms/:realm/protocol/openid-connect/userinfo',
         (req, res) => {
-            const identity = identityStore.get();
+            const clientId = clientFromBearer(req, ctx.keys.publicKey) || ctx.config.clientPadrao;
+            const identity = resolveIdentity(ctx, clientId);
 
             return res.json({
                 ...buildUserClaims(identity),
@@ -551,26 +626,20 @@ function registerHomeRedirect(server) {
 }
 
 /**
- * Painel de controle: consulta e altera a identidade ativa, troca de perfil,
- * importa um access token real e gera tokens de teste.
+ * Painel de controle: identidade ativa, perfis, importação de access token,
+ * cadastro de sistemas e geração de tokens de teste para qualquer realm/client.
  */
-function registerPanelRoutes(server, root, privateKey, config, identityStore) {
-    const realmUrl = buildRealmUrl(config.baseUrl, config.realm);
+function registerPanelRoutes(server, root, ctx) {
+    const { config, systems, identityStore } = ctx;
 
     const buildEstado = () => ({
         identidade: identityStore.get(),
-        perfis: listPerfis(),
-        sistema,
-        realm: config.realm,
-        clientId: config.clientId,
-        issuer: realmUrl,
-        endpoints: {
-            discovery: `${realmUrl}/.well-known/openid-configuration`,
-            auth: `${realmUrl}/protocol/openid-connect/auth`,
-            token: `${realmUrl}/protocol/openid-connect/token`,
-            certs: `${realmUrl}/protocol/openid-connect/certs`,
-            account: `${realmUrl}/account`
-        }
+        sistemas: systems.list(),
+        perfis: systems.perfis(),
+        perfilTodos: TODOS,
+        baseUrl: config.baseUrl,
+        realmPadrao: config.realmPadrao,
+        clientPadrao: config.clientPadrao
     });
 
     const handle = action => (req, res) => {
@@ -622,11 +691,41 @@ function registerPanelRoutes(server, root, privateKey, config, identityStore) {
     );
 
     server.post(
+        '/painel/api/sistemas',
+        jsonServer.bodyParser,
+        handle(req => {
+            const sistema = systems.save(req.body);
+            console.log(`🧩 Sistema cadastrado pelo painel: ${sistema.mnemonico} (client ${sistema.clientId || '—'})`);
+
+            return buildEstado();
+        })
+    );
+
+    server.delete(
+        '/painel/api/sistemas/:mnemonico',
+        handle(req => {
+            systems.remove(req.params.mnemonico);
+            console.log(`🧩 Sistema removido pelo painel: ${req.params.mnemonico}`);
+
+            return buildEstado();
+        })
+    );
+
+    server.post(
         '/painel/api/gerar-token',
-        handle(() => issueTokens(privateKey, config, identityStore.get(), {
-            clientId: config.clientId,
-            sid: crypto.randomUUID()
-        }))
+        jsonServer.bodyParser,
+        handle(req => {
+            const realm = req.body?.realm?.trim() || config.realmPadrao;
+            const clientId = req.body?.clientId?.trim() || config.clientPadrao;
+            const tokens = issueTokens(ctx, { realm, clientId, sid: crypto.randomUUID() });
+
+            return {
+                ...tokens,
+                realm,
+                clientId,
+                roles: jwt.decode(tokens.access_token).realm_access.roles
+            };
+        })
     );
 }
 
@@ -710,52 +809,6 @@ function registerRegistrationRoute(server) {
             message: 'User registered successfully (Mock)'
         });
     });
-}
-
-/**
- * Configura os endpoints de descoberta do OpenID Connect
- * e informações do Realm.
- */
-function configureRealm(db, config) {
-    const realmBaseUrl = buildRealmUrl(
-        config.baseUrl,
-        config.realm
-    );
-
-    db['openid-configuration'] = {
-        ...db['openid-configuration'],
-
-        issuer: realmBaseUrl,
-
-        authorization_endpoint:
-            `${realmBaseUrl}/protocol/openid-connect/auth`,
-
-        token_endpoint:
-            `${realmBaseUrl}/protocol/openid-connect/token`,
-
-        userinfo_endpoint:
-            `${realmBaseUrl}/protocol/openid-connect/userinfo`,
-
-        end_session_endpoint:
-            `${realmBaseUrl}/protocol/openid-connect/logout`,
-
-        jwks_uri:
-            `${realmBaseUrl}/protocol/openid-connect/certs`
-    };
-
-    db['realm-info'] = {
-        ...db['realm-info'],
-
-        realm: config.realm,
-
-        'token-service':
-            `${realmBaseUrl}/protocol/openid-connect`,
-
-        'account-service':
-            `${realmBaseUrl}/account`
-    };
-
-    return db;
 }
 
 /**
