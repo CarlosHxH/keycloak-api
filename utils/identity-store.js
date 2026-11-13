@@ -105,7 +105,7 @@ function createIdentityStore(root, defaults) {
 
 /**
  * Decodifica o payload sem validar assinatura: o token vem de outro
- * Keycloak (ex.: dev2), cuja chave o mock não conhece. Só os claims são usados.
+ * Keycloak (o real), cuja chave o mock não conhece. Só os claims são usados.
  */
 function decodeToken(rawToken) {
     const token = String(rawToken || '')

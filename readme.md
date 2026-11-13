@@ -387,8 +387,8 @@ curl http://localhost:9090/auth/realms/master/protocol/openid-connect/certs
 ### 3. Obter Token (POST)
 
 ```bash
-curl -X POST http://localhost:9090/auth/realms/SESP/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=srop-app \
+curl -X POST http://localhost:9090/auth/realms/master/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=my-app \
   -d username=admin -d password=admin
 ```
 
@@ -451,7 +451,7 @@ curl http://localhost:9090/auth/realms/master/protocol/openid-connect/token | \
 docker compose up -d --build
 ```
 
-Sobe o mock em `http://localhost:9090` já configurado para o SROP (realm `SESP`, client `srop-app`,
+Sobe o mock em `http://localhost:9090` com realm sugerido `master` e client sugerido `my-app` (qualquer realm/client funciona;
 roles de `config/srop.json`). Os valores podem ser sobrescritos por um `.env` na raiz (mesmas variáveis de `.env-example`).
 As chaves RSA ficam no volume `keycloak-keys`, então sobrevivem a restarts. O `config/` vai dentro da imagem:
 não monte `./config` por cima de `/app/config` (no Coolify, caminhos relativos viram uma pasta vazia e o app não sobe).
@@ -464,7 +464,7 @@ Localmente, o `docker-compose.override.yaml` é carregado junto e publica a port
 
 Use o recurso **Docker Compose** apontando para `docker-compose.yaml` (o override é ignorado pelo Coolify):
 
-- `SERVICE_URL_KEYCLOAK_9090` faz o Coolify gerar o domínio pelo wildcard (ex.: `http://keycloak-<id>.172-17-41-166.sslip.io`)
+- `SERVICE_URL_KEYCLOAK_9090` faz o Coolify gerar o domínio pelo wildcard (ex.: `http://keycloak-<id>.<ip>.sslip.io`)
   e rotear o proxy para a porta 9090. Não é preciso publicar porta nem preencher domínio à mão.
 - `MOCK_KEYCLOAK_URL` recebe essa URL automaticamente (`SERVICE_URL_KEYCLOAK`), então o `iss` dos tokens bate com o domínio.
   Se trocar o domínio na UI do Coolify, faça redeploy para o issuer acompanhar.
@@ -486,10 +486,10 @@ O mock atende a todos esses pontos.
 2. **srop-api** (local, porta 8080), apontando para o mock:
    ```env
    KEYCLOAK_AUTH_SERVER=http://localhost:9090/auth/
-   JWT_ISSUER_URI=http://localhost:9090/auth/realms/SESP
-   JWT_JWK_SET_URI=http://localhost:9090/auth/realms/SESP/protocol/openid-connect/certs
+   JWT_ISSUER_URI=http://localhost:9090/auth/realms/master
+   JWT_JWK_SET_URI=http://localhost:9090/auth/realms/master/protocol/openid-connect/certs
    ```
-3. **srop-app:** `npm run start:mock` (configuração `mock` → `environment.mock.ts`, Keycloak em `http://localhost:9090/auth`).
+3. **srop-app:** aponte `NG_APP_KEYCLOAK_URL` para `http://localhost:9090/auth` (o realm é o do environment do app).
 
 > O `iss` do token vem de `MOCK_KEYCLOAK_URL`. Se o srop-api rodar em outro container, ele ainda precisa
 > enxergar o mock pela mesma URL que o navegador usa (ex.: `localhost:9090`), senão a validação de issuer falha.
@@ -518,11 +518,11 @@ Também é aceito `grant_type=password` no `/token` com essas credenciais (útil
 
 1. **Antes/no início da manutenção**, copie seu access token atual (DevTools → requisição ao srop-api → header
    `Authorization`) ou use um token antigo: expirado não tem problema.
-2. Suba o mock (`docker compose up -d --build`) com `MOCK_KEYCLOAK_REALM=SESP` e `MOCK_ADMIN_SENHA` trocada (o padrão é `admin`).
+2. Suba o mock (`docker compose up -d --build`) com `MOCK_ADMIN_SENHA` trocada (o padrão é `admin`).
 3. Em `/painel`, importe o token. Como o `sub` é o mesmo, o srop-api encontra o usuário pelo `codigoKeycloak` normalmente.
 4. Troque manualmente a URL do Keycloak para o mock:
    - srop-app: `NG_APP_KEYCLOAK_URL=<MOCK_KEYCLOAK_URL>/auth`
-   - srop-api: `KEYCLOAK_AUTH_SERVER=<MOCK_KEYCLOAK_URL>/auth/`, `JWT_ISSUER_URI` e `JWT_JWK_SET_URI` apontando para o realm `SESP` do mock.
+   - srop-api: `KEYCLOAK_AUTH_SERVER=<MOCK_KEYCLOAK_URL>/auth/`, `JWT_ISSUER_URI` e `JWT_JWK_SET_URI` apontando para o mesmo realm do app, no mock.
 5. Terminada a manutenção, volte as URLs para o Keycloak real.
 
 > ⚠️ O mock tem **uma única identidade ativa**: todos que logarem por ele entram como o mesmo usuário.
