@@ -444,6 +444,41 @@ curl http://localhost:9090/auth/realms/master/protocol/openid-connect/token | \
 
 ---
 
+## 🐳 Docker
+
+```bash
+docker compose up -d --build
+```
+
+Sobe o mock em `http://localhost:9090` já configurado para o SROP (realm `SESP`, client `srop-app`,
+roles de `config/srop.json`). Os valores podem ser sobrescritos por um `.env` na raiz (mesmas variáveis de `.env-example`).
+As chaves RSA ficam no volume `keycloak-keys`, então sobrevivem a restarts; `./config` é montado só-leitura.
+
+---
+
+## 🚓 Uso com o srop-app / srop-api
+
+O keycloak-js do srop-app (v11) exige `nonce` no token e chama `GET /auth/realms/{realm}/account`
+(`loadUserProfile`); o adapter Keycloak do srop-api exige `typ: Bearer`, `sub` e `iss` igual ao realm configurado.
+O mock atende a todos esses pontos.
+
+1. **Mock:** `docker compose up -d --build` (ou `npm run dev` com `.env` copiado do `.env-example`).
+   - `MOCK_USER_USERNAME` precisa ser um login existente no banco do SROP.
+   - `MOCK_USER_SUB` deve ser o `codigoKeycloak` desse usuário no SROP (se estiver vazio, o front grava o `sub` no primeiro login).
+   - `MOCK_PERFIL` escolhe o perfil em `config/srop.json`: `ADMINISTRADOR`, `ADM_ORGAO` ou `OPERADOR`.
+2. **srop-api** (local, porta 8080), apontando para o mock:
+   ```env
+   KEYCLOAK_AUTH_SERVER=http://localhost:9090/auth/
+   JWT_ISSUER_URI=http://localhost:9090/auth/realms/SESP
+   JWT_JWK_SET_URI=http://localhost:9090/auth/realms/SESP/protocol/openid-connect/certs
+   ```
+3. **srop-app:** `npm run start:mock` (configuração `mock` → `environment.mock.ts`, Keycloak em `http://localhost:9090/auth`).
+
+> O `iss` do token vem de `MOCK_KEYCLOAK_URL`. Se o srop-api rodar em outro container, ele ainda precisa
+> enxergar o mock pela mesma URL que o navegador usa (ex.: `localhost:9090`), senão a validação de issuer falha.
+
+---
+
 ## 🐛 Troubleshooting
 
 ### Porta já em uso
