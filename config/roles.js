@@ -20,48 +20,72 @@ if (!fs.existsSync(configPath)) {
 }
 
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-
-const ROLES = [];
-
 const sistema = config.sistema;
-const MOCK_PERFIL = process.env.MOCK_PERFIL?.trim();
 
-sistema.modulos.forEach(modulo => {
-    if (modulo.status?.toLowerCase() !== 'ativo') {
-        return;
-    }
+const isAtivo = item => item.status?.toLowerCase() === 'ativo';
 
-    modulo.funcionalidade.forEach(funcionalidade => {
-        if (funcionalidade.status?.toLowerCase() !== 'ativo') {
-            return;
-        }
+function buildRoleName(modulo, funcionalidade) {
+    return [
+        'ROLE',
+        sistema.mnemonico,
+        modulo.mnemonico,
+        funcionalidade.mnemonico
+    ]
+        .join('_')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .toUpperCase();
+}
 
-        // Se MOCK_PERFIL estiver definido, filtra pelo perfil.
-        // Se não estiver definido, considera todas as funcionalidades ativas.
-        if (
-            MOCK_PERFIL &&
-            !funcionalidade.grupos?.some(
-                grupo => grupo.trim() === MOCK_PERFIL
-            )
-        ) {
-            return;
-        }
+/**
+ * Roles das funcionalidades ativas do perfil informado.
+ * Sem perfil, considera todas as funcionalidades ativas.
+ */
+function buildRoles(perfil) {
+    const roles = [];
+    const perfilAlvo = perfil?.trim();
 
-        const role = [
-            'ROLE',
-            sistema.mnemonico,
-            modulo.mnemonico,
-            funcionalidade.mnemonico
-        ]
-            .join('_')
-            .replace(/[^a-zA-Z0-9_]/g, '_')
-            .replace(/_+/g, '_')
-            .toUpperCase();
+    sistema.modulos.filter(isAtivo).forEach(modulo => {
+        modulo.funcionalidade.filter(isAtivo).forEach(funcionalidade => {
+            if (
+                perfilAlvo &&
+                !funcionalidade.grupos?.some(grupo => grupo.trim() === perfilAlvo)
+            ) {
+                return;
+            }
 
-        if (!ROLES.includes(role)) {
-            ROLES.push(role);
-        }
+            const role = buildRoleName(modulo, funcionalidade);
+
+            if (!roles.includes(role)) {
+                roles.push(role);
+            }
+        });
     });
-});
 
-module.exports = ROLES;
+    return roles;
+}
+
+/**
+ * Perfis (grupos) declarados no JSON do sistema, com suas roles.
+ */
+function listPerfis() {
+    const nomes = new Set();
+
+    sistema.modulos.filter(isAtivo).forEach(modulo => {
+        modulo.funcionalidade.filter(isAtivo).forEach(funcionalidade => {
+            funcionalidade.grupos?.forEach(grupo => nomes.add(grupo.trim()));
+        });
+    });
+
+    return [...nomes]
+        .filter(Boolean)
+        .map(nome => ({ nome, roles: buildRoles(nome) }));
+}
+
+module.exports = {
+    sistema: sistema.mnemonico,
+    perfilPadrao: process.env.MOCK_PERFIL?.trim() || '',
+    ROLES: buildRoles(process.env.MOCK_PERFIL),
+    buildRoles,
+    listPerfis
+};

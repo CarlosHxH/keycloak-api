@@ -10,4 +10,4 @@ status = 200
 force = true
 
 [functions]
-included_files = ["config/*.json", "login.html"]
+included_files = ["config/*.json", "login.html", "painel.html"]

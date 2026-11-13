@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Painel Mock Keycloak</title>
+		<style>
+			:root {
+				--bg: #f4f5f7;
+				--surface: #ffffff;
+				--border: #dde1e6;
+				--text: #1d232b;
+				--muted: #5d6773;
+				--accent: #0b6bcb;
+				--accent-text: #ffffff;
+				--danger: #b42318;
+				--ok: #1a7f37;
+				--warn-bg: #fff4e5;
+				--warn-text: #7a4300;
+				--code-bg: #f0f2f5;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--bg: #12161b;
+					--surface: #1b2128;
+					--border: #2e3742;
+					--text: #e6e9ed;
+					--muted: #9aa5b1;
+					--accent: #4c9be8;
+					--accent-text: #0b1016;
+					--danger: #f0716a;
+					--ok: #5cc27a;
+					--warn-bg: #3a2a12;
+					--warn-text: #f3c98b;
+					--code-bg: #232a33;
+				}
+			}
+			* { box-sizing: border-box; }
+			body {
+				margin: 0;
+				font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+				background: var(--bg);
+				color: var(--text);
+				line-height: 1.45;
+			}
+			header, main { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+			header { padding-top: 28px; padding-bottom: 8px; }
+			h1 { font-size: 1.4rem; margin: 0 0 6px; }
+			h2 { font-size: 1.05rem; margin: 0 0 12px; }
+			.meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 0.85rem; }
+			.chip {
+				background: var(--surface);
+				border: 1px solid var(--border);
+				border-radius: 999px;
+				padding: 2px 10px;
+			}
+			.chip strong { color: var(--text); }
+			.warn {
+				background: var(--warn-bg);
+				color: var(--warn-text);
+				border-radius: 6px;
+				padding: 10px 14px;
+				margin: 14px 0 0;
+				font-size: 0.88rem;
+			}
+			main { display: grid; gap: 16px; padding-top: 16px; padding-bottom: 40px; }
+			.card {
+				background: var(--surface);
+				border: 1px solid var(--border);
+				border-radius: 8px;
+				padding: 18px;
+				min-width: 0;
+			}
+			.hint { color: var(--muted); font-size: 0.85rem; margin: -6px 0 12px; }
+			.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+			label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
+			input, select, textarea {
+				width: 100%;
+				font: inherit;
+				color: var(--text);
+				background: var(--bg);
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				padding: 8px 10px;
+			}
+			textarea { font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; resize: vertical; }
+			textarea.token { min-height: 110px; word-break: break-all; }
+			textarea.roles { min-height: 220px; }
+			.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+			button {
+				font: inherit;
+				border-radius: 6px;
+				padding: 8px 14px;
+				cursor: pointer;
+				border: 1px solid var(--border);
+				background: var(--surface);
+				color: var(--text);
+			}
+			button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+			button.danger { color: var(--danger); }
+			button:disabled { opacity: 0.55; cursor: default; }
+			.status { font-size: 0.85rem; }
+			.status.ok { color: var(--ok); }
+			.status.error { color: var(--danger); }
+			dl.preview {
+				display: grid;
+				grid-template-columns: max-content 1fr;
+				gap: 4px 12px;
+				margin: 12px 0 0;
+				font-size: 0.85rem;
+			}
+			dl.preview dt { color: var(--muted); }
+			dl.preview dd { margin: 0; overflow-wrap: anywhere; }
+			code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; }
+			pre {
+				background: var(--code-bg);
+				border-radius: 6px;
+				padding: 10px;
+				overflow: auto;
+				max-height: 260px;
+				margin: 8px 0 0;
+				white-space: pre-wrap;
+				word-break: break-all;
+			}
+			ul.endpoints { list-style: none; padding: 0; margin: 0; font-size: 0.82rem; }
+			ul.endpoints li { padding: 4px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+			ul.endpoints li:last-child { border-bottom: 0; }
+			ul.endpoints span { color: var(--muted); display: inline-block; min-width: 80px; }
+			details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+			.hidden { display: none; }
+		</style>
+	</head>
+	<body>
+		<header>
+			<h1>Painel do Mock Keycloak</h1>
+			<div class="meta" id="meta"></div>
+			<p class="warn">
+				Uso de contingência: este servidor assina tokens para qualquer identidade configurada aqui.
+				Aponte sistemas para ele só durante a manutenção do Keycloak e volte a URL ao normal em seguida.
+			</p>
+		</header>
+
+		<main>
+			<section class="card">
+				<h2>Importar access token</h2>
+				<p class="hint">
+					Cole um access token emitido pelo Keycloak real (ex.: copiado do navegador antes da manutenção).
+					O mock passa a emitir tokens com o mesmo usuário, <code>sub</code> e roles. A assinatura e a validade
+					do token colado não são verificadas: só os dados dele são usados.
+				</p>
+				<textarea id="tokenInput" class="token" placeholder="eyJhbGciOiJSUzI1NiIs..."></textarea>
+				<dl class="preview hidden" id="tokenPreview"></dl>
+				<div class="actions">
+					<button class="primary" id="btnImportar" disabled>Importar token</button>
+					<span class="status" id="statusImportar"></span>
+				</div>
+			</section>
+
+			<section class="card">
+				<h2>Identidade ativa</h2>
+				<p class="hint" id="origem"></p>
+				<div class="grid">
+					<div><label for="sub">sub (codigoKeycloak no SROP)</label><input id="sub" /></div>
+					<div><label for="username">Login (preferred_username)</label><input id="username" /></div>
+					<div><label for="email">E-mail</label><input id="email" /></div>
+					<div><label for="firstName">Nome</label><input id="firstName" /></div>
+					<div><label for="lastName">Sobrenome</label><input id="lastName" /></div>
+					<div>
+						<label for="perfil">Perfil do sistema</label>
+						<select id="perfil"></select>
+					</div>
+				</div>
+				<div style="margin-top: 12px">
+					<label for="roles">Roles do realm (uma por linha) · <span id="rolesCount">0</span></label>
+					<textarea id="roles" class="roles"></textarea>
+				</div>
+				<details id="extrasBox" class="hidden">
+					<summary>Claims extras e resource_access vindos do token importado</summary>
+					<pre id="extras"></pre>
+				</details>
+				<div class="actions">
+					<button class="primary" id="btnSalvar">Salvar identidade</button>
+					<button class="danger" id="btnResetar">Restaurar valores do .env</button>
+					<span class="status" id="statusIdentidade"></span>
+				</div>
+			</section>
+
+			<section class="card">
+				<h2>Token de teste</h2>
+				<p class="hint">Gera um access token da identidade ativa, para Swagger, Postman ou curl.</p>
+				<div class="actions" style="margin-top: 0">
+					<button id="btnGerar">Gerar access token</button>
+					<button id="btnCopiar" class="hidden">Copiar</button>
+					<span class="status" id="statusGerar"></span>
+				</div>
+				<pre id="tokenGerado" class="hidden"></pre>
+			</section>
+
+			<section class="card">
+				<h2>Endpoints</h2>
+				<ul class="endpoints" id="endpoints"></ul>
+			</section>
+		</main>
+
+		<script>
+			const PERFIL_PERSONALIZADO = '';
+			const $ = id => document.getElementById(id);
+			let estado = null;
+
+			async function api(method, url, body) {
+				const response = await fetch(url, {
+					method,
+					headers: body ? { 'Content-Type': 'application/json' } : {},
+					body: body ? JSON.stringify(body) : undefined
+				});
+				const data = await response.json().catch(() => ({}));
+				if (!response.ok) {
+					throw new Error(data.error || `Erro HTTP ${response.status}`);
+				}
+				return data;
+			}
+
+			function setStatus(id, message, tipo) {
+				const el = $(id);
+				el.textContent = message;
+				el.className = `status ${tipo || ''}`;
+			}
+
+			function decodeJwtPayload(token) {
+				const parts = token.trim().replace(/^bearer\s+/i, '').split('.');
+				if (parts.length < 2) {
+					throw new Error('Formato inválido: o JWT precisa ter 3 partes separadas por ponto.');
+				}
+				const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+				const json = decodeURIComponent(
+					atob(base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '='))
+						.split('')
+						.map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+						.join('')
+				);
+				return JSON.parse(json);
+			}
+
+			function formatDate(epochSeconds) {
+				return epochSeconds ? new Date(epochSeconds * 1000).toLocaleString('pt-BR') : '—';
+			}
+
+			function renderPreview(rows) {
+				const dl = $('tokenPreview');
+				dl.replaceChildren();
+				rows.forEach(([termo, valor]) => {
+					const dt = document.createElement('dt');
+					const dd = document.createElement('dd');
+					dt.textContent = termo;
+					dd.textContent = valor;
+					dl.append(dt, dd);
+				});
+				dl.classList.toggle('hidden', rows.length === 0);
+			}
+
+			function onTokenInput() {
+				const valor = $('tokenInput').value.trim();
+				setStatus('statusImportar', '');
+				if (!valor) {
+					renderPreview([]);
+					$('btnImportar').disabled = true;
+					return;
+				}
+				try {
+					const payload = decodeJwtPayload(valor);
+					const roles = payload.realm_access?.roles || [];
+					const expirado = payload.exp && payload.exp * 1000 < Date.now();
+					renderPreview([
+						['Usuário', `${payload.preferred_username || '—'} · ${payload.name || ''}`],
+						['sub', payload.sub || '— (obrigatório)'],
+						['E-mail', payload.email || '—'],
+						['Emissor', payload.iss || '—'],
+						['Client (azp)', payload.azp || '—'],
+						['Roles do realm', String(roles.length)],
+						['Expira em', `${formatDate(payload.exp)}${expirado ? ' (expirado, sem problema)' : ''}`]
+					]);
+					$('btnImportar').disabled = !payload.sub;
+				} catch (error) {
+					renderPreview([['Erro', error.message]]);
+					$('btnImportar').disabled = true;
+				}
+			}
+
+			function readRoles() {
+				return $('roles').value.split(/\r?\n/).map(r => r.trim()).filter(Boolean);
+			}
+
+			function updateRolesCount() {
+				$('rolesCount').textContent = `${readRoles().length} roles`;
+			}
+
+			function rolesDoPerfil(nome) {
+				return estado.perfis.find(p => p.nome === nome)?.roles || [];
+			}
+
+			function render(novoEstado) {
+				estado = novoEstado;
+				const { identidade } = estado;
+
+				const meta = $('meta');
+				meta.replaceChildren();
+				[
+					['Sistema', estado.sistema],
+					['Realm', estado.realm],
+					['Client', estado.clientId],
+					['Issuer', estado.issuer]
+				].forEach(([rotulo, valor]) => {
+					const chip = document.createElement('span');
+					chip.className = 'chip';
+					chip.append(`${rotulo}: `);
+					const strong = document.createElement('strong');
+					strong.textContent = valor;
+					chip.append(strong);
+					meta.append(chip);
+				});
+
+				const origens = {
+					env: 'Valores do .env.',
+					manual: 'Editada manualmente no painel.',
+					token: 'Importada de access token'
+				};
+				let origem = origens[identidade.origem] || '';
+				if (identidade.origem === 'token' && identidade.tokenImportado) {
+					origem += ` (${identidade.tokenImportado.iss || 'emissor desconhecido'}).`;
+				}
+				if (identidade.atualizadoEm) {
+					origem += ` Atualizada em ${new Date(identidade.atualizadoEm).toLocaleString('pt-BR')}.`;
+				}
+				$('origem').textContent = origem;
+
+				['sub', 'username', 'email', 'firstName', 'lastName'].forEach(campo => {
+					$(campo).value = identidade[campo] || '';
+				});
+
+				const select = $('perfil');
+				select.replaceChildren();
+				const personalizado = new Option('Personalizado (roles abaixo)', PERFIL_PERSONALIZADO);
+				select.append(personalizado);
+				estado.perfis.forEach(perfil => {
+					select.append(new Option(`${perfil.nome} (${perfil.roles.length} roles)`, perfil.nome));
+				});
+				select.value = estado.perfis.some(p => p.nome === identidade.perfil)
+					? identidade.perfil
+					: PERFIL_PERSONALIZADO;
+
+				$('roles').value = identidade.roles.join('\n');
+				updateRolesCount();
+
+				const extras = {};
+				if (Object.keys(identidade.extraClaims).length) extras.claims = identidade.extraClaims;
+				if (Object.keys(identidade.resourceAccess).length) extras.resource_access = identidade.resourceAccess;
+				$('extrasBox').classList.toggle('hidden', Object.keys(extras).length === 0);
+				$('extras').textContent = JSON.stringify(extras, null, 2);
+
+				const lista = $('endpoints');
+				lista.replaceChildren();
+				Object.entries(estado.endpoints).forEach(([nome, url]) => {
+					const li = document.createElement('li');
+					const rotulo = document.createElement('span');
+					rotulo.textContent = nome;
+					li.append(rotulo, url);
+					lista.append(li);
+				});
+			}
+
+			async function carregar() {
+				try {
+					render(await api('GET', '/painel/api/estado'));
+				} catch (error) {
+					setStatus('statusIdentidade', error.message, 'error');
+				}
+			}
+
+			$('tokenInput').addEventListener('input', onTokenInput);
+
+			$('btnImportar').addEventListener('click', async () => {
+				try {
+					render(await api('POST', '/painel/api/importar-token', { token: $('tokenInput').value }));
+					$('tokenInput').value = '';
+					renderPreview([]);
+					$('btnImportar').disabled = true;
+					setStatus('statusImportar', 'Token importado. Os próximos logins usam esta identidade.', 'ok');
+				} catch (error) {
+					setStatus('statusImportar', error.message, 'error');
+				}
+			});
+
+			$('perfil').addEventListener('change', event => {
+				if (event.target.value !== PERFIL_PERSONALIZADO) {
+					$('roles').value = rolesDoPerfil(event.target.value).join('\n');
+					updateRolesCount();
+				}
+			});
+
+			$('roles').addEventListener('input', () => {
+				updateRolesCount();
+				$('perfil').value = PERFIL_PERSONALIZADO;
+			});
+
+			$('btnSalvar').addEventListener('click', async () => {
+				if (!$('sub').value.trim()) {
+					setStatus('statusIdentidade', 'O campo sub é obrigatório.', 'error');
+					return;
+				}
+				try {
+					render(await api('PUT', '/painel/api/identidade', {
+						sub: $('sub').value.trim(),
+						username: $('username').value.trim(),
+						email: $('email').value.trim(),
+						firstName: $('firstName').value.trim(),
+						lastName: $('lastName').value.trim(),
+						name: [$('firstName').value.trim(), $('lastName').value.trim()].filter(Boolean).join(' '),
+						perfil: $('perfil').value || null,
+						roles: readRoles()
+					}));
+					setStatus('statusIdentidade', 'Identidade salva.', 'ok');
+				} catch (error) {
+					setStatus('statusIdentidade', error.message, 'error');
+				}
+			});
+
+			$('btnResetar').addEventListener('click', async () => {
+				if (!confirm('Descartar a identidade atual e voltar aos valores do .env?')) {
+					return;
+				}
+				try {
+					render(await api('POST', '/painel/api/resetar'));
+					setStatus('statusIdentidade', 'Valores do .env restaurados.', 'ok');
+				} catch (error) {
+					setStatus('statusIdentidade', error.message, 'error');
+				}
+			});
+
+			$('btnGerar').addEventListener('click', async () => {
+				try {
+					const tokens = await api('POST', '/painel/api/gerar-token');
+					$('tokenGerado').textContent = tokens.access_token;
+					$('tokenGerado').classList.remove('hidden');
+					$('btnCopiar').classList.remove('hidden');
+					setStatus('statusGerar', `Válido por ${Math.round(tokens.expires_in / 60)} min.`, 'ok');
+				} catch (error) {
+					setStatus('statusGerar', error.message, 'error');
+				}
+			});
+
+			$('btnCopiar').addEventListener('click', async () => {
+				try {
+					await navigator.clipboard.writeText($('tokenGerado').textContent);
+					setStatus('statusGerar', 'Copiado.', 'ok');
+				} catch (error) {
+					setStatus('statusGerar', 'Selecione o token e copie manualmente (Ctrl+C).', 'error');
+				}
+			});
+
+			carregar();
+		</script>
+	</body>
+</html>

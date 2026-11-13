@@ -479,6 +479,40 @@ O mock atende a todos esses pontos.
 
 ---
 
+## 🎛️ Painel de controle
+
+Acesse `/painel` (a raiz `/` redireciona para ele). Pelo painel é possível:
+
+- **Importar access token**: cole um token emitido pelo Keycloak real; o mock passa a emitir tokens com o mesmo
+  `sub`, login, nome, e-mail, roles do realm, `resource_access` e claims customizados. A assinatura e a expiração do
+  token colado não são verificadas (só os dados são usados), então um token expirado serve.
+- **Editar a identidade ativa** (sub, login, nome, e-mail) e **trocar de perfil** (`ADMINISTRADOR`, `OPERADOR`, `ADM_ORGAO`)
+  ou editar as roles uma a uma.
+- **Restaurar os valores do `.env`**.
+- **Gerar um access token de teste** para Swagger/Postman/curl.
+
+A identidade fica em `data/identity.json` (volume `keycloak-data` no Docker) e sobrevive a restarts.
+Defina `MOCK_PAINEL_SENHA` para proteger o painel com Basic Auth (qualquer usuário, essa senha).
+
+---
+
+## 🚨 Contingência: Keycloak em manutenção
+
+1. **Antes/no início da manutenção**, copie seu access token atual (DevTools → requisição ao srop-api → header
+   `Authorization`) ou use um token antigo: expirado não tem problema.
+2. Suba o mock (`docker compose up -d --build`) com `MOCK_KEYCLOAK_REALM=SESP` e `MOCK_PAINEL_SENHA` definida.
+3. Em `/painel`, importe o token. Como o `sub` é o mesmo, o srop-api encontra o usuário pelo `codigoKeycloak` normalmente.
+4. Troque manualmente a URL do Keycloak para o mock:
+   - srop-app: `NG_APP_KEYCLOAK_URL=<MOCK_KEYCLOAK_URL>/auth`
+   - srop-api: `KEYCLOAK_AUTH_SERVER=<MOCK_KEYCLOAK_URL>/auth/`, `JWT_ISSUER_URI` e `JWT_JWK_SET_URI` apontando para o realm `SESP` do mock.
+5. Terminada a manutenção, volte as URLs para o Keycloak real.
+
+> ⚠️ O mock tem **uma única identidade ativa**: todos que logarem por ele entram como o mesmo usuário.
+> Ele assina tokens para qualquer identidade definida no painel, então use só em desenvolvimento/homologação,
+> nunca aponte um ambiente de produção para ele.
+
+---
+
 ## 🐛 Troubleshooting
 
 ### Porta já em uso

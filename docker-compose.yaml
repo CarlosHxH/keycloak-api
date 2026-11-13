@@ -18,10 +18,13 @@ services:
       MOCK_USER_FIRST_NAME: ${MOCK_USER_FIRST_NAME:-Usuario}
       MOCK_USER_LAST_NAME: ${MOCK_USER_LAST_NAME:-Mock}
       MOCK_ACCESS_TOKEN_EXPIRES_IN: ${MOCK_ACCESS_TOKEN_EXPIRES_IN:-1h}
+      MOCK_PAINEL_SENHA: ${MOCK_PAINEL_SENHA:-}
     volumes:
       - ./config:/app/config:ro
       - keycloak-keys:/app/keys
+      - keycloak-data:/app/data
     restart: unless-stopped
 
 volumes:
   keycloak-keys:
+  keycloak-data:
