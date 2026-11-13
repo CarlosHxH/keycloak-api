@@ -68,7 +68,13 @@
 					return;
 				}
 
-				const code = 'mock-authorization-code-12345';
+				// O nonce viaja dentro do code para o /token devolvê-lo no JWT;
+				// o keycloak-js descarta o token quando o nonce não confere.
+				const nonce = urlParams.get('nonce') || '';
+				const code = 'mock.' + btoa(JSON.stringify({ nonce }))
+					.replace(/\+/g, '-')
+					.replace(/\//g, '_')
+					.replace(/=+$/, '');
 
 				// Usa o construtor URL para montar o callback com segurança (sem
 				// interpolação de string), preservando querystring/hash pré-existentes.

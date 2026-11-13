@@ -1,0 +1,104 @@
+{
+  "sistema": {
+    "nome": "SROP",
+    "descricao": "Sistema de Registro de Ocorrências Policiais",
+    "sigla": "SROP",
+    "mnemonico": "SROP",
+    "url": "srop-app",
+    "icone": "assignment",
+    "client_id": "srop-app",
+    "status": "ativo",
+    "modulos": [
+      {
+        "nome": "Acesso",
+        "sistema": "SROP",
+        "mnemonico": "ACESSO",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Manter acesso", "mnemonico": "MANTER_ACESSO", "status": "ativo", "grupos": ["ADMINISTRADOR"] }
+        ]
+      },
+      {
+        "nome": "Boletim",
+        "sistema": "SROP",
+        "mnemonico": "BOLETIM",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Encaminhar boletim", "mnemonico": "ENCAMINHAR_BOLETIM", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] },
+          { "nome": "Manter boletim policial", "mnemonico": "MANTER_BOLETIM_POLICIAL", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] },
+          { "nome": "Manter boletim de trânsito", "mnemonico": "MANTER_BOLETIM_TRANSITO", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] },
+          { "nome": "Manter boletim DV", "mnemonico": "MANTER_BOLETIM_DV", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Manter boletim MILAE", "mnemonico": "MANTER_BOLETIM_MILAE", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Manter condutor do boletim", "mnemonico": "MANTER_CONDUTOR_BOLETIM", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] },
+          { "nome": "Visualizar histórico do boletim", "mnemonico": "VISUALIZAR_HISTORICO_BOLETIM", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] },
+          { "nome": "Sigilo - acessar", "mnemonico": "SIGILO_ACESSAR", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Sigilo - administrar", "mnemonico": "SIGILO_ADMIN", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Sigilo - cancelar", "mnemonico": "SIGILO_CANCELAR", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Sigilo - inteligência/estatística", "mnemonico": "SIGILO_INTELIGENCIA_ESTATISTICA", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Sigilo - solicitar", "mnemonico": "SIGILO_SOLICITAR", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] },
+          { "nome": "Sigilo - validar", "mnemonico": "SIGILO_VALIDAR", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Sigilo - visualizar", "mnemonico": "SIGILO_VISUALIZAR", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] }
+        ]
+      },
+      {
+        "nome": "Controle de privilégio",
+        "sistema": "SROP",
+        "mnemonico": "CONTROLE_PRIVILEGIO",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Administrador master", "mnemonico": "ADM_MASTER", "status": "ativo", "grupos": ["ADMINISTRADOR"] },
+          { "nome": "Administrador de órgão", "mnemonico": "ADM_ORGAO", "status": "ativo", "grupos": ["ADM_ORGAO"] }
+        ]
+      },
+      {
+        "nome": "Observatório",
+        "sistema": "SROP",
+        "mnemonico": "OBSERVATORIO",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Analisar boletim com IA", "mnemonico": "BOLETIM_ANALISAR_IA", "status": "ativo", "grupos": ["ADMINISTRADOR"] }
+        ]
+      },
+      {
+        "nome": "Relatórios",
+        "sistema": "SROP",
+        "mnemonico": "RELATORIOS",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Manter relatórios", "mnemonico": "MANTER_RELATORIOS", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] }
+        ]
+      },
+      {
+        "nome": "Restrição",
+        "sistema": "SROP",
+        "mnemonico": "RESTRICAO",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Ocultar boletins de outros órgãos", "mnemonico": "OCULTAR_BOLETINS_OUTROS_ORGAO", "status": "ativo", "grupos": [] },
+          { "nome": "Operação com restrição de órgão", "mnemonico": "OPERACAO_COM_RESTRICAO_ORGAO", "status": "ativo", "grupos": [] },
+          { "nome": "Operação com restrição de unidade", "mnemonico": "OPERACAO_COM_RESTRICAO_UNIDADE", "status": "ativo", "grupos": ["OPERADOR"] }
+        ]
+      },
+      {
+        "nome": "Tabelas básicas",
+        "sistema": "SROP",
+        "mnemonico": "TABELAS_BASICAS",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Consultar tabelas básicas", "mnemonico": "CONSULTAR_TABELAS_BASICAS", "status": "ativo", "grupos": ["ADMINISTRADOR", "ADM_ORGAO", "OPERADOR"] },
+          { "nome": "Manter tabelas básicas", "mnemonico": "MANTER_TABELAS_BASICAS", "status": "ativo", "grupos": ["ADMINISTRADOR"] }
+        ]
+      },
+      {
+        "nome": "WS SESP DETRAN",
+        "sistema": "SROP",
+        "mnemonico": "WS_SESP_DETRAN",
+        "status": "ativo",
+        "funcionalidade": [
+          { "nome": "Consultar habilitação", "mnemonico": "HABILITACAO_CONSULTAR", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] },
+          { "nome": "Consultar veículos", "mnemonico": "VEICULOS_CONSULTAR", "status": "ativo", "grupos": ["ADMINISTRADOR", "OPERADOR"] }
+        ]
+      }
+    ]
+  }
+}

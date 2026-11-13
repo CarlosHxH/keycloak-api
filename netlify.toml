@@ -8,3 +8,6 @@ from = "/auth/*"
 to = "/.netlify/functions/server/:splat"
 status = 200
 force = true
+
+[functions]
+included_files = ["config/*.json", "login.html"]

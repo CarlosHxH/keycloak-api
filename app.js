@@ -11,6 +11,7 @@ dotenv.config();
 
 const KID = 'mock-kid';
 const REFRESH_TOKEN_EXPIRES_IN = '30d';
+const CODE_PREFIX = 'mock.';
 
 function createApp(root) {
     const server = jsonServer.create();
@@ -29,6 +30,8 @@ function createApp(root) {
     registerMiddlewares(server, middlewares);
     registerJwksRoute(server, keys.jwk);
     registerTokenRoute(server, keys.privateKey, config);
+    registerAccountRoute(server, config);
+    registerUserinfoRoute(server, config);
     registerAuthRoute(server, root);
     registerLogoutRoute(server);
     registerRegistrationRoute(server);
@@ -49,6 +52,9 @@ function loadConfig() {
         MOCK_USER_SUB,
         MOCK_USER_USERNAME,
         MOCK_USER_EMAIL,
+        MOCK_USER_FIRST_NAME,
+        MOCK_USER_LAST_NAME,
+        MOCK_CLIENT_ID,
         MOCK_ACCESS_TOKEN_EXPIRES_IN
     } = process.env;
 
@@ -67,10 +73,13 @@ function loadConfig() {
     return {
         realm: MOCK_KEYCLOAK_REALM,
         baseUrl: MOCK_KEYCLOAK_URL,
+        clientId: MOCK_CLIENT_ID || 'srop-app',
         user: {
             sub: MOCK_USER_SUB,
             username: MOCK_USER_USERNAME,
-            email: MOCK_USER_EMAIL
+            email: MOCK_USER_EMAIL,
+            firstName: MOCK_USER_FIRST_NAME || 'Usuario',
+            lastName: MOCK_USER_LAST_NAME || 'Mock'
         },
         accessTokenExpiresIn:
             MOCK_ACCESS_TOKEN_EXPIRES_IN || '1h'
@@ -165,15 +174,21 @@ function registerJwksRoute(server, jwk) {
 
 /**
  * Endpoint de emissão de tokens.
+ *
+ * Aceita authorization_code (code gerado pelo login.html, que carrega o
+ * nonce) e refresh_token. O keycloak-js descarta o token se o nonce
+ * não for o mesmo enviado na tela de login.
  */
 function registerTokenRoute(server, privateKey, config) {
     server.post(
         '/auth/realms/:realm/protocol/openid-connect/token',
+        jsonServer.bodyParser,
         (req, res) => {
             const requestedRealm = req.params.realm;
+            const body = req.body || {};
 
             console.log(
-                '>>> POST /auth/realms/:realm/protocol/openid-connect/token'
+                `>>> POST /auth/realms/${requestedRealm}/protocol/openid-connect/token (${body.grant_type || 'sem grant_type'})`
             );
 
             if (requestedRealm !== config.realm) {
@@ -186,33 +201,31 @@ function registerTokenRoute(server, privateKey, config) {
                 });
             }
 
-            console.log(
-                `>>> Realm configurado: ${config.realm}`
-            );
+            const session = body.grant_type === 'refresh_token'
+                ? readSessionFromRefreshToken(body.refresh_token)
+                : readSessionFromCode(body.code);
+
+            if (!session) {
+                return res.status(400).json({
+                    error: 'invalid_grant'
+                });
+            }
+
+            session.clientId = body.client_id || session.clientId || config.clientId;
 
             const issuer = buildRealmUrl(
                 config.baseUrl,
                 config.realm
             );
 
-            const accessToken = generateAccessToken(
-                privateKey,
-                issuer,
-                config
-            );
-
-            const refreshToken = generateRefreshToken(
-                privateKey,
-                issuer,
-                config
-            );
-
             return res.status(200).json({
-                access_token: accessToken,
-                refresh_token: refreshToken,
+                access_token: generateAccessToken(privateKey, issuer, config, session),
+                refresh_token: generateRefreshToken(privateKey, issuer, config, session),
+                id_token: generateIdToken(privateKey, issuer, config, session),
                 token_type: 'Bearer',
                 expires_in: 3600,
                 refresh_expires_in: 2592000,
+                session_state: session.sid,
                 scope: 'openid profile email'
             });
         }
@@ -220,44 +233,185 @@ function registerTokenRoute(server, privateKey, config) {
 }
 
 /**
- * Gera o Access Token JWT.
+ * Lê o nonce embutido no code gerado pelo login.html.
+ * Codes sem o prefixo seguem aceitos, sem nonce.
  */
-function generateAccessToken(privateKey, issuer, config) {
+function readSessionFromCode(code) {
+    if (!code) {
+        return null;
+    }
+
+    let nonce;
+
+    if (code.startsWith(CODE_PREFIX)) {
+        try {
+            const payload = JSON.parse(
+                Buffer.from(code.slice(CODE_PREFIX.length), 'base64url').toString('utf8')
+            );
+            nonce = payload.nonce;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    return {
+        nonce,
+        sid: crypto.randomUUID()
+    };
+}
+
+/**
+ * Recupera nonce/sessão de um refresh token emitido anteriormente.
+ */
+function readSessionFromRefreshToken(refreshToken) {
+    const decoded = refreshToken && jwt.decode(refreshToken);
+
+    if (!decoded || decoded.typ !== 'Refresh') {
+        return null;
+    }
+
+    return {
+        nonce: decoded.nonce,
+        sid: decoded.sid || crypto.randomUUID(),
+        clientId: decoded.azp
+    };
+}
+
+/**
+ * Claims de identidade do usuário mock, no formato do Keycloak.
+ */
+function buildUserClaims(config) {
+    const { user } = config;
+
+    return {
+        sub: user.sub,
+        preferred_username: user.username,
+        email: user.email,
+        email_verified: true,
+        name: `${user.firstName} ${user.lastName}`,
+        given_name: user.firstName,
+        family_name: user.lastName
+    };
+}
+
+/**
+ * Assina um JWT com a chave privada do mock.
+ */
+function signToken(privateKey, issuer, payload, expiresIn) {
     return jwt.sign(
-        {
-            sub: config.user.sub,
-            preferred_username: config.user.username,
-            email: config.user.email,
-            realm_access: {
-                roles: ROLES
-            }
-        },
+        payload,
         privateKey,
         {
             algorithm: 'RS256',
             keyid: KID,
             issuer,
-            expiresIn: config.accessTokenExpiresIn
+            expiresIn
         }
+    );
+}
+
+/**
+ * Gera o Access Token JWT.
+ *
+ * typ, azp e sub são exigidos pelo adapter Keycloak do srop-api.
+ */
+function generateAccessToken(privateKey, issuer, config, session) {
+    return signToken(
+        privateKey,
+        issuer,
+        {
+            ...buildUserClaims(config),
+            typ: 'Bearer',
+            azp: session.clientId,
+            nonce: session.nonce,
+            sid: session.sid,
+            session_state: session.sid,
+            scope: 'openid profile email',
+            realm_access: {
+                roles: ROLES
+            }
+        },
+        config.accessTokenExpiresIn
     );
 }
 
 /**
  * Gera o Refresh Token JWT.
  */
-function generateRefreshToken(privateKey, issuer, config) {
-    return jwt.sign(
+function generateRefreshToken(privateKey, issuer, config, session) {
+    return signToken(
+        privateKey,
+        issuer,
         {
             sub: config.user.sub,
             preferred_username: config.user.username,
-            type: 'refresh'
+            typ: 'Refresh',
+            azp: session.clientId,
+            nonce: session.nonce,
+            sid: session.sid,
+            session_state: session.sid
         },
+        REFRESH_TOKEN_EXPIRES_IN
+    );
+}
+
+/**
+ * Gera o ID Token JWT.
+ */
+function generateIdToken(privateKey, issuer, config, session) {
+    return signToken(
         privateKey,
+        issuer,
         {
-            algorithm: 'RS256',
-            keyid: KID,
-            issuer,
-            expiresIn: REFRESH_TOKEN_EXPIRES_IN
+            ...buildUserClaims(config),
+            typ: 'ID',
+            aud: session.clientId,
+            azp: session.clientId,
+            nonce: session.nonce,
+            sid: session.sid,
+            session_state: session.sid
+        },
+        config.accessTokenExpiresIn
+    );
+}
+
+/**
+ * Endpoint da conta do usuário.
+ *
+ * Consumido pelo keycloak-js em loadUserProfile().
+ */
+function registerAccountRoute(server, config) {
+    server.get(
+        '/auth/realms/:realm/account',
+        (req, res) => {
+            const { user } = config;
+
+            return res.json({
+                id: user.sub,
+                username: user.username,
+                email: user.email,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                emailVerified: true,
+                attributes: {}
+            });
+        }
+    );
+}
+
+/**
+ * Endpoint userinfo do OIDC, refletindo o usuário configurado no .env.
+ */
+function registerUserinfoRoute(server, config) {
+    server.get(
+        '/auth/realms/:realm/protocol/openid-connect/userinfo',
+        (req, res) => {
+            return res.json({
+                ...buildUserClaims(config),
+                realm_access: {
+                    roles: ROLES
+                }
+            });
         }
     );
 }

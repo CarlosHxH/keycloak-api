@@ -1,0 +1,27 @@
+services:
+  keycloak-api:
+    build:
+      context: .
+    image: keycloak-api:local
+    container_name: keycloak-api
+    ports:
+      - "${PORT:-9090}:9090"
+    environment:
+      MOCK_KEYCLOAK_URL: ${MOCK_KEYCLOAK_URL:-http://localhost:9090}
+      MOCK_KEYCLOAK_REALM: ${MOCK_KEYCLOAK_REALM:-SESP}
+      MOCK_CLIENT_ID: ${MOCK_CLIENT_ID:-srop-app}
+      MOCK_SISTEMA_CONFIG: ${MOCK_SISTEMA_CONFIG:-config/srop.json}
+      MOCK_PERFIL: ${MOCK_PERFIL:-ADMINISTRADOR}
+      MOCK_USER_SUB: ${MOCK_USER_SUB:-12345678-90ab-cdef-1234-567890abcdef}
+      MOCK_USER_USERNAME: ${MOCK_USER_USERNAME:-admin}
+      MOCK_USER_EMAIL: ${MOCK_USER_EMAIL:-admin@example.com}
+      MOCK_USER_FIRST_NAME: ${MOCK_USER_FIRST_NAME:-Usuario}
+      MOCK_USER_LAST_NAME: ${MOCK_USER_LAST_NAME:-Mock}
+      MOCK_ACCESS_TOKEN_EXPIRES_IN: ${MOCK_ACCESS_TOKEN_EXPIRES_IN:-1h}
+    volumes:
+      - ./config:/app/config:ro
+      - keycloak-keys:/app/keys
+    restart: unless-stopped
+
+volumes:
+  keycloak-keys:
