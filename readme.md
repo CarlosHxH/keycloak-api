@@ -213,19 +213,20 @@ Todos os endpoints seguem o padrão Keycloak OpenID Connect.
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ 2. Página de login é exibida (login.html)                  │
-│    Clique em "Log In" com qualquer credencial             │
+│    Entre com MOCK_ADMIN_USUARIO / MOCK_ADMIN_SENHA         │
+│    (padrão admin / admin)                                  │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ 3. Redirecionamento para seu app com código:               │
 │    https://seu-app.com/callback?                           │
-│      code=mock-authorization-code-12345&                   │
+│      code=<code assinado>&                                 │
 │      state=xyz123                                          │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ 4. Sua app troca código por token (POST /token):           │
-│    Body: { code: "mock-authorization-code-12345" }        │
+│    Body: code=<code assinado>                              │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -382,13 +383,9 @@ curl http://localhost:9090/auth/realms/master/protocol/openid-connect/certs
 ### 3. Obter Token (POST)
 
 ```bash
-curl -X POST http://localhost:9090/auth/realms/master/protocol/openid-connect/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code": "mock-authorization-code-12345",
-    "client_id": "seu-client",
-    "grant_type": "authorization_code"
-  }'
+curl -X POST http://localhost:9090/auth/realms/SESP/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=srop-app \
+  -d username=admin -d password=admin
 ```
 
 **Resposta:**
@@ -467,7 +464,7 @@ Use o recurso **Docker Compose** apontando para `docker-compose.yaml` (o overrid
   e rotear o proxy para a porta 9090. Não é preciso publicar porta nem preencher domínio à mão.
 - `MOCK_KEYCLOAK_URL` recebe essa URL automaticamente (`SERVICE_URL_KEYCLOAK`), então o `iss` dos tokens bate com o domínio.
   Se trocar o domínio na UI do Coolify, faça redeploy para o issuer acompanhar.
-- `MOCK_PAINEL_SENHA` recebe uma senha gerada pelo Coolify (`SERVICE_PASSWORD_PAINEL`), visível na aba de variáveis.
+- `MOCK_ADMIN_USUARIO` / `MOCK_ADMIN_SENHA` (padrão `admin` / `admin`): troque a senha na aba de variáveis do Coolify.
 - As demais variáveis (`MOCK_USER_*`, `MOCK_PERFIL`...) aparecem na UI com os valores padrão e podem ser editadas.
 
 ---
@@ -508,7 +505,8 @@ Acesse `/painel` (a raiz `/` redireciona para ele). Pelo painel é possível:
 - **Gerar um access token de teste** para Swagger/Postman/curl.
 
 A identidade fica em `data/identity.json` (volume `keycloak-data` no Docker) e sobrevive a restarts.
-Defina `MOCK_PAINEL_SENHA` para proteger o painel com Basic Auth (qualquer usuário, essa senha).
+O painel e a tela de login exigem `MOCK_ADMIN_USUARIO` / `MOCK_ADMIN_SENHA` (padrão `admin` / `admin`).
+Também é aceito `grant_type=password` no `/token` com essas credenciais (útil para curl).
 
 ---
 
@@ -516,7 +514,7 @@ Defina `MOCK_PAINEL_SENHA` para proteger o painel com Basic Auth (qualquer usuá
 
 1. **Antes/no início da manutenção**, copie seu access token atual (DevTools → requisição ao srop-api → header
    `Authorization`) ou use um token antigo: expirado não tem problema.
-2. Suba o mock (`docker compose up -d --build`) com `MOCK_KEYCLOAK_REALM=SESP` e `MOCK_PAINEL_SENHA` definida.
+2. Suba o mock (`docker compose up -d --build`) com `MOCK_KEYCLOAK_REALM=SESP` e `MOCK_ADMIN_SENHA` trocada (o padrão é `admin`).
 3. Em `/painel`, importe o token. Como o `sub` é o mesmo, o srop-api encontra o usuário pelo `codigoKeycloak` normalmente.
 4. Troque manualmente a URL do Keycloak para o mock:
    - srop-app: `NG_APP_KEYCLOAK_URL=<MOCK_KEYCLOAK_URL>/auth`

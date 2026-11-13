@@ -12,7 +12,8 @@ dotenv.config();
 
 const KID = 'mock-kid';
 const REFRESH_TOKEN_EXPIRES_IN = '30d';
-const CODE_PREFIX = 'mock.';
+const CODE_EXPIRES_IN = '5m';
+const DEFAULT_ADMIN = 'admin';
 
 function createApp(root) {
     const server = jsonServer.create();
@@ -32,7 +33,8 @@ function createApp(root) {
     registerHomeRedirect(server);
     registerMiddlewares(server, middlewares);
     registerJwksRoute(server, keys.jwk);
-    registerTokenRoute(server, keys.privateKey, config, identityStore);
+    registerLoginRoute(server, keys.privateKey, config);
+    registerTokenRoute(server, keys, config, identityStore);
     registerAccountRoute(server, identityStore);
     registerUserinfoRoute(server, identityStore);
     registerPanelRoutes(server, root, keys.privateKey, config, identityStore);
@@ -60,7 +62,8 @@ function loadConfig() {
         MOCK_USER_LAST_NAME,
         MOCK_CLIENT_ID,
         MOCK_ACCESS_TOKEN_EXPIRES_IN,
-        MOCK_PAINEL_SENHA
+        MOCK_ADMIN_USUARIO,
+        MOCK_ADMIN_SENHA
     } = process.env;
 
     if (!MOCK_KEYCLOAK_REALM) {
@@ -88,8 +91,37 @@ function loadConfig() {
         },
         accessTokenExpiresIn:
             MOCK_ACCESS_TOKEN_EXPIRES_IN || '1h',
-        painelSenha: MOCK_PAINEL_SENHA?.trim() || ''
+        admin: loadAdminCredentials(MOCK_ADMIN_USUARIO, MOCK_ADMIN_SENHA)
     };
+}
+
+/**
+ * Credenciais exigidas na tela de login e no painel (padrão admin/admin).
+ */
+function loadAdminCredentials(usuario, senha) {
+    const admin = {
+        usuario: usuario?.trim() || DEFAULT_ADMIN,
+        senha: senha?.trim() || DEFAULT_ADMIN
+    };
+
+    if (admin.senha === DEFAULT_ADMIN) {
+        console.warn('⚠️  Usando a senha padrão "admin": defina MOCK_ADMIN_SENHA se o mock estiver acessível na rede.');
+    }
+
+    return admin;
+}
+
+function sameSecret(esperado, recebido) {
+    const hash = valor => crypto.createHash('sha256').update(String(valor ?? '')).digest();
+
+    return crypto.timingSafeEqual(hash(esperado), hash(recebido));
+}
+
+function isValidLogin(admin, usuario, senha) {
+    const usuarioOk = sameSecret(admin.usuario, usuario);
+    const senhaOk = sameSecret(admin.senha, senha);
+
+    return usuarioOk && senhaOk;
 }
 
 /**
@@ -193,13 +225,47 @@ function registerJwksRoute(server, jwk) {
 }
 
 /**
+ * Valida usuário/senha da tela de login e devolve o authorization code.
+ *
+ * O code é um JWT assinado pelo mock com o nonce do keycloak-js, então não
+ * pode ser forjado no navegador para pular a senha.
+ */
+function registerLoginRoute(server, privateKey, config) {
+    server.post(
+        '/auth/realms/:realm/login-actions/authenticate',
+        jsonServer.bodyParser,
+        (req, res) => {
+            const { username, password, nonce } = req.body || {};
+
+            if (req.params.realm !== config.realm) {
+                return res.status(404).json({ error: 'Realm not found' });
+            }
+
+            if (!isValidLogin(config.admin, username, password)) {
+                console.log(`❌ Login recusado para "${username || ''}"`);
+
+                return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+            }
+
+            const code = jwt.sign(
+                { typ: 'Code', nonce: nonce || undefined },
+                privateKey,
+                { algorithm: 'RS256', keyid: KID, expiresIn: CODE_EXPIRES_IN }
+            );
+
+            return res.json({ code });
+        }
+    );
+}
+
+/**
  * Endpoint de emissão de tokens.
  *
- * Aceita authorization_code (code gerado pelo login.html, que carrega o
- * nonce) e refresh_token. O keycloak-js descarta o token se o nonce
- * não for o mesmo enviado na tela de login.
+ * Aceita authorization_code (code emitido no login, com o nonce), refresh_token
+ * e password. O keycloak-js descarta o token se o nonce não for o mesmo
+ * enviado na tela de login.
  */
-function registerTokenRoute(server, privateKey, config, identityStore) {
+function registerTokenRoute(server, keys, config, identityStore) {
     server.post(
         '/auth/realms/:realm/protocol/openid-connect/token',
         jsonServer.bodyParser,
@@ -221,9 +287,22 @@ function registerTokenRoute(server, privateKey, config, identityStore) {
                 });
             }
 
-            const session = body.grant_type === 'refresh_token'
-                ? readSessionFromRefreshToken(body.refresh_token)
-                : readSessionFromCode(body.code);
+            const grantType = body.grant_type || 'authorization_code';
+            const readers = {
+                authorization_code: () => readSessionFromCode(body.code, keys.publicKey),
+                refresh_token: () => readSessionFromRefreshToken(body.refresh_token, keys.publicKey),
+                password: () => isValidLogin(config.admin, body.username, body.password)
+                    ? { sid: crypto.randomUUID() }
+                    : null
+            };
+
+            if (!readers[grantType]) {
+                return res.status(400).json({
+                    error: 'unsupported_grant_type'
+                });
+            }
+
+            const session = readers[grantType]();
 
             if (!session) {
                 return res.status(400).json({
@@ -234,7 +313,7 @@ function registerTokenRoute(server, privateKey, config, identityStore) {
             session.clientId = body.client_id || session.clientId || config.clientId;
 
             return res.status(200).json(
-                issueTokens(privateKey, config, identityStore.get(), session)
+                issueTokens(keys.privateKey, config, identityStore.get(), session)
             );
         }
     );
@@ -262,29 +341,30 @@ function issueTokens(privateKey, config, identity, session) {
 }
 
 /**
- * Lê o nonce embutido no code gerado pelo login.html.
- * Codes sem o prefixo seguem aceitos, sem nonce.
+ * Verifica um JWT emitido pelo próprio mock e confere o typ esperado.
  */
-function readSessionFromCode(code) {
-    if (!code) {
+function verifyOwnToken(token, publicKey, typ) {
+    try {
+        const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+
+        return decoded.typ === typ ? decoded : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Lê o nonce do code emitido em /login-actions/authenticate.
+ */
+function readSessionFromCode(code, publicKey) {
+    const decoded = code && verifyOwnToken(code, publicKey, 'Code');
+
+    if (!decoded) {
         return null;
     }
 
-    let nonce;
-
-    if (code.startsWith(CODE_PREFIX)) {
-        try {
-            const payload = JSON.parse(
-                Buffer.from(code.slice(CODE_PREFIX.length), 'base64url').toString('utf8')
-            );
-            nonce = payload.nonce;
-        } catch (error) {
-            return null;
-        }
-    }
-
     return {
-        nonce,
+        nonce: decoded.nonce,
         sid: crypto.randomUUID()
     };
 }
@@ -292,10 +372,10 @@ function readSessionFromCode(code) {
 /**
  * Recupera nonce/sessão de um refresh token emitido anteriormente.
  */
-function readSessionFromRefreshToken(refreshToken) {
-    const decoded = refreshToken && jwt.decode(refreshToken);
+function readSessionFromRefreshToken(refreshToken, publicKey) {
+    const decoded = refreshToken && verifyOwnToken(refreshToken, publicKey, 'Refresh');
 
-    if (!decoded || decoded.typ !== 'Refresh') {
+    if (!decoded) {
         return null;
     }
 
@@ -501,11 +581,7 @@ function registerPanelRoutes(server, root, privateKey, config, identityStore) {
         }
     };
 
-    if (config.painelSenha) {
-        server.use('/painel', requirePanelPassword(config.painelSenha));
-    } else {
-        console.warn('⚠️  Painel sem senha: defina MOCK_PAINEL_SENHA se o mock estiver acessível na rede.');
-    }
+    server.use('/painel', requireAdminCredentials(config.admin));
 
     server.get('/painel', (req, res) => {
         return res.sendFile(path.join(root, 'painel.html'));
@@ -555,20 +631,20 @@ function registerPanelRoutes(server, root, privateKey, config, identityStore) {
 }
 
 /**
- * Basic Auth do painel: qualquer usuário, senha igual a MOCK_PAINEL_SENHA.
+ * Basic Auth do painel com as mesmas credenciais da tela de login.
  */
-function requirePanelPassword(senha) {
-    const esperado = crypto.createHash('sha256').update(senha).digest();
-
+function requireAdminCredentials(admin) {
     return (req, res, next) => {
         const [scheme, encoded] = (req.headers.authorization || '').split(' ');
         const credenciais = scheme === 'Basic' && encoded
             ? Buffer.from(encoded, 'base64').toString('utf8')
             : '';
-        const recebida = credenciais.slice(credenciais.indexOf(':') + 1);
-        const hashRecebido = crypto.createHash('sha256').update(recebida).digest();
+        const separador = credenciais.indexOf(':');
 
-        if (credenciais && crypto.timingSafeEqual(esperado, hashRecebido)) {
+        if (
+            separador > -1 &&
+            isValidLogin(admin, credenciais.slice(0, separador), credenciais.slice(separador + 1))
+        ) {
             return next();
         }
 
