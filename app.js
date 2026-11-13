@@ -77,7 +77,7 @@ function loadConfig() {
 
     return {
         realm: MOCK_KEYCLOAK_REALM,
-        baseUrl: MOCK_KEYCLOAK_URL,
+        baseUrl: MOCK_KEYCLOAK_URL.trim().replace(/\/+$/, ''),
         clientId: MOCK_CLIENT_ID || 'srop-app',
         user: {
             sub: MOCK_USER_SUB,

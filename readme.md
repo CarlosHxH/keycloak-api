@@ -452,7 +452,23 @@ docker compose up -d --build
 
 Sobe o mock em `http://localhost:9090` já configurado para o SROP (realm `SESP`, client `srop-app`,
 roles de `config/srop.json`). Os valores podem ser sobrescritos por um `.env` na raiz (mesmas variáveis de `.env-example`).
-As chaves RSA ficam no volume `keycloak-keys`, então sobrevivem a restarts; `./config` é montado só-leitura.
+As chaves RSA ficam no volume `keycloak-keys`, então sobrevivem a restarts. O `config/` vai dentro da imagem:
+não monte `./config` por cima de `/app/config` (no Coolify, caminhos relativos viram uma pasta vazia e o app não sobe).
+Para outro JSON de sistema, adicione-o ao repositório e aponte `MOCK_SISTEMA_CONFIG` para ele.
+
+Localmente, o `docker-compose.override.yaml` é carregado junto e publica a porta `9090` com
+`MOCK_KEYCLOAK_URL=http://localhost:9090`.
+
+### Coolify (domínio wildcard)
+
+Use o recurso **Docker Compose** apontando para `docker-compose.yaml` (o override é ignorado pelo Coolify):
+
+- `SERVICE_URL_KEYCLOAK_9090` faz o Coolify gerar o domínio pelo wildcard (ex.: `http://keycloak-<id>.172-17-41-166.sslip.io`)
+  e rotear o proxy para a porta 9090. Não é preciso publicar porta nem preencher domínio à mão.
+- `MOCK_KEYCLOAK_URL` recebe essa URL automaticamente (`SERVICE_URL_KEYCLOAK`), então o `iss` dos tokens bate com o domínio.
+  Se trocar o domínio na UI do Coolify, faça redeploy para o issuer acompanhar.
+- `MOCK_PAINEL_SENHA` recebe uma senha gerada pelo Coolify (`SERVICE_PASSWORD_PAINEL`), visível na aba de variáveis.
+- As demais variáveis (`MOCK_USER_*`, `MOCK_PERFIL`...) aparecem na UI com os valores padrão e podem ser editadas.
 
 ---
 
